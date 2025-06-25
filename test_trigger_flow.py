@@ -54,8 +54,8 @@ def test_trigger_flow():
                     "game_id": "test_game_1",
                     "game_name": "Test Poker",
                     "game_type": "card",
-                    "active_gamepalye": 15000,
-                    "livegameplaye": 8000,
+                    "active_gamepalye": 1000,
+                    "livegameplaye": 900,
                     "status": "active",
                     "created_at": datetime.now().isoformat()
                 },
@@ -63,8 +63,43 @@ def test_trigger_flow():
                     "game_id": "test_game_2",
                     "game_name": "Test Rummy",
                     "game_type": "card",
-                    "active_gamepalye": 12000,
-                    "livegameplaye": 6000,
+                    "active_gamepalye": 1000,
+                    "livegameplaye": 600,
+                    "status": "active",
+                    "created_at": datetime.now().isoformat()
+                },
+                {
+                    "game_id": "test_game_2",
+                    "game_name": "Test Rummy",
+                    "game_type": "card",
+                    "active_gamepalye": 1000,
+                    "livegameplaye": 600,
+                    "status": "active",
+                    "created_at": datetime.now().isoformat()
+                },{
+                    "game_id": "test_game_2",
+                    "game_name": "Test Rummy",
+                    "game_type": "card",
+                    "active_gamepalye": 1000,
+                    "livegameplaye": 600,
+                    "status": "active",
+                    "created_at": datetime.now().isoformat()
+                },
+                {
+                    "game_id": "test_game_2",
+                    "game_name": "Test Rummy",
+                    "game_type": "card",
+                    "active_gamepalye": 1000,
+                    "livegameplaye": 600,
+                    "status": "active",
+                    "created_at": datetime.now().isoformat()
+                },
+                {
+                    "game_id": "test_game_2",
+                    "game_name": "Test Rummy",
+                    "game_type": "card",
+                    "active_gamepalye": 1000,
+                    "livegameplaye": 600,
                     "status": "active",
                     "created_at": datetime.now().isoformat()
                 }

@@ -103,6 +103,21 @@ def test_redis_connection():
                     "active_gamepalye": 45678,
                     "livegameplaye": 45678,
                     "game name": "testgame"
+                },
+                {
+                    "active_gamepalye": 45678,
+                    "livegameplaye": 45678,
+                    "game name": "testgame"
+                },
+                {
+                    "active_gamepalye": 45678,
+                    "livegameplaye": 45678,
+                    "game name": "testgame"
+                },
+                {
+                    "active_gamepalye": 45678,
+                    "livegameplaye": 45678,
+                    "game name": "testgame"
                 }
             ],
             "cached_at": datetime.now().isoformat(),

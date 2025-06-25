@@ -37,7 +37,6 @@ type LoginResponse struct {
 	MobileNo     string `json:"mobile_no"`
 	DeviceID     string `json:"device_id"`
 	SessionToken string `json:"session_token"`
-	JWTToken     string `json:"jwt_token"`
 	OTP          int    `json:"otp"`
 	IsNewUser    bool   `json:"is_new_user"`
 	Timestamp    string `json:"timestamp"`
@@ -57,7 +56,9 @@ type OTPVerificationResponse struct {
 	Status       string `json:"status"`
 	Message      string `json:"message"`
 	MobileNo     string `json:"mobile_no"`
+	DeviceID     string `json:"device_id"`
 	SessionToken string `json:"session_token"`
+	JWTToken     string `json:"jwt_token"`
 	UserStatus   string `json:"user_status"`
 	Timestamp    string `json:"timestamp"`
 	SocketID     string `json:"socket_id"`

@@ -123,12 +123,8 @@ func (s *SocketService) HandleLogin(loginReq models.LoginRequest) (*models.Login
 		userID = existingUser.ID
 		isNewUser = false
 	}
-	// Generate JWT token with encryption
-	jwtToken, err := utils.GenerateEncryptedJWTToken(loginReq.MobileNo, loginReq.DeviceID, userID, sessionToken)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate encrypted JWT token: %v", err)
-	}
-	log.Printf("isNewUser sefsefsefs: %v", isNewUser)
+
+	log.Printf("isNewUser: %v", isNewUser)
 
 	// Check if there's an existing active session for this mobile number and device
 	var existingSession models.Session
@@ -140,13 +136,12 @@ func (s *SocketService) HandleLogin(loginReq models.LoginRequest) (*models.Login
 	}).Decode(&existingSession)
 
 	if err == nil {
-		// Existing session found, update it with new tokens
+		// Existing session found, update it with new session token
 		log.Printf("Updating existing session for mobile: %s, device: %s", loginReq.MobileNo, loginReq.DeviceID)
 
 		update := bson.M{
 			"$set": bson.M{
 				"session_token": sessionToken,
-				"jwt_token":     jwtToken,
 				"fcm_token":     loginReq.FCMToken,
 				"updated_at":    time.Now(),
 				"expires_at":    time.Now().Add(24 * time.Hour),
@@ -165,14 +160,14 @@ func (s *SocketService) HandleLogin(loginReq models.LoginRequest) (*models.Login
 
 		log.Printf("Existing session updated for %s", loginReq.MobileNo)
 	} else if err == mongo.ErrNoDocuments {
-		// No existing session, create new one
+		// No existing session, create new one (without JWT token yet)
 		log.Printf("Creating new session for mobile: %s, device: %s", loginReq.MobileNo, loginReq.DeviceID)
 
 		session := models.Session{
 			ID:           primitive.NewObjectID().Hex(),
 			UserID:       userID,
 			SessionToken: sessionToken,
-			JWTToken:     jwtToken,
+			JWTToken:     "", // Will be set after OTP verification
 			MobileNo:     loginReq.MobileNo,
 			DeviceID:     loginReq.DeviceID,
 			FCMToken:     loginReq.FCMToken,
@@ -193,20 +188,18 @@ func (s *SocketService) HandleLogin(loginReq models.LoginRequest) (*models.Login
 	}
 
 	log.Printf("OTP generated for %s: %d", loginReq.MobileNo, otp)
-	log.Printf("JWT token generated for %s: %s", loginReq.MobileNo, jwtToken[:50]+"...")
 
 	return &models.LoginResponse{
 		Status:       "success",
-		Message:      "Login successful",
+		Message:      "OTP sent successfully",
 		MobileNo:     loginReq.MobileNo,
 		DeviceID:     loginReq.DeviceID,
 		SessionToken: sessionToken,
-		JWTToken:     jwtToken,
 		OTP:          otp,
 		IsNewUser:    isNewUser,
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
 		SocketID:     "",
-		Event:        "login:success",
+		Event:        "otp:sent",
 	}, nil
 }
 
@@ -261,15 +254,38 @@ func (s *SocketService) HandleOTPVerification(otpReq models.OTPVerificationReque
 		userStatus = "existing_user"
 	}
 
+	// Generate simple JWT token with only mobile_no, device_id, and fcm_token
+	jwtToken, err := utils.GenerateSimpleJWTToken(otpReq.MobileNo, session.DeviceID, session.FCMToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate JWT token: %v", err)
+	}
+
+	// Update session with JWT token
+	_, err = s.sessionsCollection.UpdateOne(
+		ctx,
+		bson.M{"session_token": otpReq.SessionToken},
+		bson.M{"$set": bson.M{
+			"jwt_token":  jwtToken,
+			"updated_at": time.Now(),
+		}},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update session with JWT token: %v", err)
+	}
+
+	log.Printf("✅ JWT token generated and stored for user: %s", otpReq.MobileNo)
+
 	return &models.OTPVerificationResponse{
 		Status:       "success",
 		Message:      "OTP verified successfully",
 		MobileNo:     otpReq.MobileNo,
+		DeviceID:     session.DeviceID,
 		SessionToken: otpReq.SessionToken,
+		JWTToken:     jwtToken,
 		UserStatus:   userStatus,
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
 		SocketID:     "",
-		Event:        "verify:otp:success",
+		Event:        "otp:verified",
 	}, nil
 }
 
@@ -577,19 +593,31 @@ func (s *SocketService) getGameListData() map[string]interface{} {
 	// Generate fresh game list data
 	gamelist := []map[string]interface{}{
 		{
-			"active_gamepalye": 12313,
-			"livegameplaye":    12313,
-			"game name":        "newgame",
+			"game_id":          "simple_1",
+			"game_name":        "Simple Ludo",
+			"game_type":        "board",
+			"active_gamepalye": 1500,
+			"livegameplaye":    800,
+			"status":           "active",
+			"created_at":       time.Now().UTC().Format(time.RFC3339),
 		},
 		{
-			"active_gamepalye": 12313,
-			"livegameplaye":    12313,
-			"game name":        "newgame",
+			"game_id":          "2",
+			"game_name":        "Test Rummy",
+			"game_type":        "card",
+			"active_gamepalye": 1000,
+			"livegameplaye":    600,
+			"status":           "active",
+			"created_at":       time.Now().UTC().Format(time.RFC3339),
 		},
 		{
-			"active_gamepalye": 12313,
-			"livegameplaye":    12313,
-			"game name":        "newgame",
+			"game_id":          "test_game_3",
+			"game_name":        "Test Teen Patti",
+			"game_type":        "card",
+			"active_gamepalye": 2000,
+			"livegameplaye":    1200,
+			"status":           "active",
+			"created_at":       time.Now().UTC().Format(time.RFC3339),
 		},
 	}
 
@@ -652,6 +680,16 @@ func (s *SocketService) getGameSubListData() map[string]interface{} {
 			"livegameplaye":    12313,
 			"game name":        "newgame",
 		},
+		{
+			"active_gamepalye": 12313,
+			"livegameplaye":    12313,
+			"game name":        "newgame",
+		},
+		{
+			"active_gamepalye": 12313,
+			"livegameplaye":    12313,
+			"game name":        "newgame",
+		},
 	}
 
 	gameListData := map[string]interface{}{
@@ -673,64 +711,42 @@ func (s *SocketService) getGameSubListData() map[string]interface{} {
 
 // HandleMainScreen handles main screen requests with authentication validation
 func (s *SocketService) HandleMainScreen(mainReq models.MainScreenRequest) (*models.MainScreenResponse, error) {
-	log.Printf("🏠 Main screen request received for mobile: %s, type: %s", mainReq.MobileNo, mainReq.MessageType)
-
 	// Create context for database operations
 	ctx := context.Background()
 
-	// Validate FCM token
-	if len(mainReq.FCMToken) < 100 {
-		return nil, fmt.Errorf("FCM token too short or invalid")
-	}
-
-	// Validate mobile number
-	if len(mainReq.MobileNo) < 10 {
-		return nil, fmt.Errorf("invalid mobile number")
-	}
-
-	// Validate JWT token using encrypted JWT utility with mobile number matching
-	err := utils.ValidateMobileNumberInToken(mainReq.JWTToken, mainReq.MobileNo)
+	// Decrypt the simple JWT token to get the original values used during token creation
+	simpleJWTData, err := utils.ValidateSimpleJWTToken(mainReq.JWTToken)
 	if err != nil {
-		return nil, fmt.Errorf("JWT token validation failed: %v", err)
+		return nil, fmt.Errorf("simple JWT token validation failed: %v", err)
 	}
 
-	// Get encrypted JWT data for additional validation
-	encryptedJWTData, err := utils.ValidateEncryptedJWTToken(mainReq.JWTToken)
-	if err != nil {
-		return nil, fmt.Errorf("encrypted JWT token validation failed: %v", err)
+	// Extract values from the decrypted JWT token
+	tokenMobileNo := simpleJWTData.MobileNo
+	tokenDeviceID := simpleJWTData.DeviceID
+	tokenFCMToken := simpleJWTData.FCMToken
+
+	// Validate mobile number from token
+	if len(tokenMobileNo) < 10 {
+		return nil, fmt.Errorf("invalid mobile number in JWT token")
 	}
 
-	// Verify encrypted JWT claims match request data
-	if encryptedJWTData.MobileNo != mainReq.MobileNo {
-		return nil, fmt.Errorf("encrypted JWT token mobile number mismatch")
+	// Validate device ID from token
+	if len(tokenDeviceID) < 1 {
+		return nil, fmt.Errorf("invalid device ID in JWT token")
 	}
 
-	if encryptedJWTData.DeviceID != mainReq.DeviceID {
-		return nil, fmt.Errorf("encrypted JWT token device ID mismatch")
-	}
-
-	// Validate device ID
-	if len(mainReq.DeviceID) < 1 {
-		return nil, fmt.Errorf("invalid device ID")
-	}
-
-	// Check if user exists and is active
+	// Check if user exists and is active using token mobile number
 	var user models.User
-	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": mainReq.MobileNo}).Decode(&user)
+	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": tokenMobileNo}).Decode(&user)
 	if err != nil {
 		return nil, fmt.Errorf("user not found or not authenticated")
 	}
 
-	// Verify user ID from JWT matches user in database
-	if encryptedJWTData.UserID != user.ID {
-		return nil, fmt.Errorf("encrypted JWT token user ID mismatch")
-	}
-
-	// Check if session exists and is active
+	// Check if session exists and is active using token values
 	var session models.Session
 	err = s.sessionsCollection.FindOne(ctx, bson.M{
-		"mobile_no":  mainReq.MobileNo,
-		"device_id":  mainReq.DeviceID,
+		"mobile_no":  tokenMobileNo,
+		"device_id":  tokenDeviceID,
 		"is_active":  true,
 		"expires_at": bson.M{"$gt": time.Now()},
 	}).Decode(&session)
@@ -739,18 +755,21 @@ func (s *SocketService) HandleMainScreen(mainReq models.MainScreenRequest) (*mod
 		return nil, fmt.Errorf("invalid or expired session")
 	}
 
-	// Verify FCM token matches stored token
-	if session.FCMToken != mainReq.FCMToken {
-		return nil, fmt.Errorf("FCM token mismatch")
-	}
-
 	// Verify JWT token matches stored token
 	if session.JWTToken != mainReq.JWTToken {
 		return nil, fmt.Errorf("JWT token mismatch with stored token")
 	}
 
-	log.Printf("✅ JWT token verified successfully for user: %s", mainReq.MobileNo)
-	log.Printf("✅ FCM token verified successfully for device: %s", mainReq.DeviceID)
+	// Verify FCM token from JWT token matches the one in request
+	if tokenFCMToken != mainReq.FCMToken {
+		return nil, fmt.Errorf("FCM token mismatch - JWT token contains: %s, request contains: %s",
+			tokenFCMToken[:20]+"...", mainReq.FCMToken[:20]+"...")
+	}
+
+	// Validate FCM token length
+	if len(mainReq.FCMToken) < 100 {
+		return nil, fmt.Errorf("FCM token too short or invalid")
+	}
 
 	// Prepare response data based on message type
 	var responseData map[string]interface{}
@@ -764,13 +783,13 @@ func (s *SocketService) HandleMainScreen(mainReq models.MainScreenRequest) (*mod
 		return nil, fmt.Errorf("unknown message type: %s", mainReq.MessageType)
 	}
 
-	log.Printf("Main screen processed successfully for %s", mainReq.MobileNo)
+	log.Printf("Main screen processed successfully for %s", tokenMobileNo)
 
 	return &models.MainScreenResponse{
 		Status:      "success",
 		Message:     "Main screen data retrieved successfully",
-		MobileNo:    mainReq.MobileNo,
-		DeviceID:    mainReq.DeviceID,
+		MobileNo:    tokenMobileNo, // Use token mobile number
+		DeviceID:    tokenDeviceID, // Use token device ID
 		MessageType: mainReq.MessageType,
 		Data:        responseData,
 		UserInfo: map[string]interface{}{

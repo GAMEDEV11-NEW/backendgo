@@ -35,8 +35,16 @@ type EncryptedJWTData struct {
 	DeviceID  string    `json:"device_id"`
 	UserID    string    `json:"user_id"`
 	SessionID string    `json:"session_id"`
+	FCMToken  string    `json:"fcm_token"` // Added FCM token
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// SimpleJWTData represents the simplified data structure for JWT tokens
+type SimpleJWTData struct {
+	MobileNo string `json:"mobile_no"`
+	DeviceID string `json:"device_id"`
+	FCMToken string `json:"fcm_token"`
 }
 
 // encryptData encrypts data using AES-256-GCM
@@ -119,6 +127,11 @@ func decryptData(encryptedData string) ([]byte, error) {
 
 // GenerateEncryptedJWTToken generates a JWT token with encrypted data for the given user
 func GenerateEncryptedJWTToken(mobileNo, deviceID, userID, sessionID string) (string, error) {
+	return GenerateEncryptedJWTTokenWithFCM(mobileNo, deviceID, userID, sessionID, "")
+}
+
+// GenerateEncryptedJWTTokenWithFCM generates a JWT token with encrypted data including FCM token
+func GenerateEncryptedJWTTokenWithFCM(mobileNo, deviceID, userID, sessionID, fcmToken string) (string, error) {
 	// Validate input parameters
 	if mobileNo == "" {
 		return "", fmt.Errorf("mobile number cannot be empty")
@@ -139,6 +152,7 @@ func GenerateEncryptedJWTToken(mobileNo, deviceID, userID, sessionID string) (st
 		DeviceID:  deviceID,
 		UserID:    userID,
 		SessionID: sessionID,
+		FCMToken:  fcmToken, // Include FCM token if provided
 		CreatedAt: time.Now(),
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
@@ -374,6 +388,11 @@ func ValidateEncryptedJWTToken(tokenString string) (*EncryptedJWTData, error) {
 		return nil, fmt.Errorf("session ID is missing in encrypted JWT token")
 	}
 
+	// FCM token is optional, so we don't validate if it's empty
+	// if encryptedData.FCMToken == "" {
+	// 	return nil, fmt.Errorf("FCM token is missing in encrypted JWT token")
+	// }
+
 	return encryptedData, nil
 }
 
@@ -425,4 +444,214 @@ func RefreshJWTToken(oldTokenString string) (string, error) {
 	}
 
 	return GenerateJWTToken(claims.MobileNo, claims.DeviceID, claims.UserID)
+}
+
+// GenerateJWTTokenWithFCM generates a JWT token using mobile_no, device_id, and fcm_token
+func GenerateJWTTokenWithFCM(mobileNo, deviceID, fcmToken string) (string, error) {
+	// Validate input parameters
+	if mobileNo == "" {
+		return "", fmt.Errorf("mobile number cannot be empty")
+	}
+	if deviceID == "" {
+		return "", fmt.Errorf("device ID cannot be empty")
+	}
+	if fcmToken == "" {
+		return "", fmt.Errorf("FCM token cannot be empty")
+	}
+
+	// Create claims with FCM token
+	claims := JWTClaims{
+		MobileNo: mobileNo,
+		DeviceID: deviceID,
+		UserID:   "", // Will be set later when user is created/retrieved
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)), // 24 hours expiry
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    "game-admin-backend",
+			Subject:   mobileNo,
+		},
+	}
+
+	// Create encrypted data with FCM token
+	encryptedData := EncryptedJWTData{
+		MobileNo:  mobileNo,
+		DeviceID:  deviceID,
+		UserID:    "",       // Will be set later
+		SessionID: "",       // Will be set later
+		FCMToken:  fcmToken, // Include FCM token in encrypted data
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+
+	// Convert to JSON for encryption
+	jsonData, err := json.Marshal(encryptedData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal encrypted data: %v", err)
+	}
+
+	// Encrypt the data
+	encryptedString, err := encryptData(jsonData)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt data: %v", err)
+	}
+
+	// Set encrypted data in claims
+	claims.EncryptedData = encryptedString
+
+	// Create token with claims
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	// Sign the token with the secret key
+	tokenString, err := token.SignedString([]byte(JWTSecretKey))
+	if err != nil {
+		return "", fmt.Errorf("failed to sign JWT token: %v", err)
+	}
+
+	log.Printf("✅ JWT token generated successfully for user: %s with FCM token", mobileNo)
+	return tokenString, nil
+}
+
+// GenerateSimpleJWTToken generates a JWT token with only mobile_no, device_id, and fcm_token
+func GenerateSimpleJWTToken(mobileNo, deviceID, fcmToken string) (string, error) {
+	// Validate input parameters
+	if mobileNo == "" {
+		return "", fmt.Errorf("mobile number cannot be empty")
+	}
+	if deviceID == "" {
+		return "", fmt.Errorf("device ID cannot be empty")
+	}
+	if fcmToken == "" {
+		return "", fmt.Errorf("FCM token cannot be empty")
+	}
+
+	// Create simple data structure
+	simpleData := SimpleJWTData{
+		MobileNo: mobileNo,
+		DeviceID: deviceID,
+		FCMToken: fcmToken,
+	}
+
+	// Convert to JSON for encryption
+	jsonData, err := json.Marshal(simpleData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal simple data: %v", err)
+	}
+
+	// Encrypt the data using AES-256-GCM
+	encryptedString, err := encryptData(jsonData)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt data: %v", err)
+	}
+
+	// Create JWT claims with encrypted data
+	claims := JWTClaims{
+		MobileNo:      mobileNo,
+		DeviceID:      deviceID,
+		UserID:        "", // Not used in simple approach
+		EncryptedData: encryptedString,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)), // 24 hours expiry
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    "game-admin-backend",
+			Subject:   mobileNo,
+		},
+	}
+
+	// Create token with claims
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	// Sign the token with the secret key
+	tokenString, err := token.SignedString([]byte(JWTSecretKey))
+	if err != nil {
+		return "", fmt.Errorf("failed to sign JWT token: %v", err)
+	}
+
+	log.Printf("✅ Simple JWT token generated successfully for user: %s", mobileNo)
+	return tokenString, nil
+}
+
+// VerifySimpleJWTToken verifies and decrypts a simple JWT token
+func VerifySimpleJWTToken(tokenString string) (*SimpleJWTData, error) {
+	if tokenString == "" {
+		return nil, fmt.Errorf("token string cannot be empty")
+	}
+
+	// Parse the token
+	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+		// Validate the signing method
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(JWTSecretKey), nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse JWT token: %v", err)
+	}
+
+	// Check if the token is valid
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid JWT token")
+	}
+
+	// Extract claims
+	claims, ok := token.Claims.(*JWTClaims)
+	if !ok {
+		return nil, fmt.Errorf("failed to extract JWT claims")
+	}
+
+	// Decrypt the encrypted data
+	if claims.EncryptedData == "" {
+		return nil, fmt.Errorf("no encrypted data found in token")
+	}
+
+	decryptedData, err := decryptData(claims.EncryptedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt token data: %v", err)
+	}
+
+	// Unmarshal the decrypted data
+	var simpleJWTData SimpleJWTData
+	err = json.Unmarshal(decryptedData, &simpleJWTData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decrypted data: %v", err)
+	}
+
+	// Verify mobile number matches
+	if simpleJWTData.MobileNo != claims.MobileNo {
+		return nil, fmt.Errorf("mobile number mismatch in decrypted data")
+	}
+
+	// Verify device ID matches
+	if simpleJWTData.DeviceID != claims.DeviceID {
+		return nil, fmt.Errorf("device ID mismatch in decrypted data")
+	}
+
+	log.Printf("✅ Simple JWT token verified successfully for user: %s", claims.MobileNo)
+	return &simpleJWTData, nil
+}
+
+// ValidateSimpleJWTToken validates a simple JWT token and returns the decrypted data if valid
+func ValidateSimpleJWTToken(tokenString string) (*SimpleJWTData, error) {
+	simpleData, err := VerifySimpleJWTToken(tokenString)
+	if err != nil {
+		return nil, err
+	}
+
+	// Additional validation
+	if simpleData.MobileNo == "" {
+		return nil, fmt.Errorf("mobile number is missing in simple JWT token")
+	}
+
+	if simpleData.DeviceID == "" {
+		return nil, fmt.Errorf("device ID is missing in simple JWT token")
+	}
+
+	if simpleData.FCMToken == "" {
+		return nil, fmt.Errorf("FCM token is missing in simple JWT token")
+	}
+
+	return simpleData, nil
 }

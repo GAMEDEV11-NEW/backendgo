@@ -189,7 +189,7 @@ func (h *SocketIoHandler) setupSocketHandlers() {
 
 			// Set socket ID in response
 			response.SocketID = socket.Id
-			socket.Emit("login:success", response)
+			socket.Emit("otp:sent", response)
 		})
 
 		// OTP verification handler
@@ -265,6 +265,156 @@ func (h *SocketIoHandler) setupSocketHandlers() {
 			// Set socket ID in response
 			response.SocketID = socket.Id
 			socket.Emit("otp:verified", response)
+		})
+
+		// Set profile handler
+		socket.On("set:profile", func(event *socketio.EventPayload) {
+
+			if len(event.Data) == 0 {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "profile_data",
+					Message:   "No profile data provided",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Parse profile request
+			profileData, ok := event.Data[0].(map[string]interface{})
+			if !ok {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "profile_data",
+					Message:   "Invalid profile data format",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Convert to SetProfileRequest struct
+			profileJSON, _ := json.Marshal(profileData)
+			var profileReq models.SetProfileRequest
+			if err := json.Unmarshal(profileJSON, &profileReq); err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "profile_data",
+					Message:   "Failed to parse profile data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Process profile setup
+			response, err := h.socketService.HandleSetProfile(profileReq)
+			if err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeVerificationError,
+					ErrorType: models.ErrorTypeValidation,
+					Field:     "profile",
+					Message:   err.Error(),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Set socket ID in response
+			response.SocketID = socket.Id
+			socket.Emit("profile:set", response)
+		})
+
+		// Set language handler
+		socket.On("set:language", func(event *socketio.EventPayload) {
+
+			if len(event.Data) == 0 {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "language_data",
+					Message:   "No language data provided",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Parse language request
+			langData, ok := event.Data[0].(map[string]interface{})
+			if !ok {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "language_data",
+					Message:   "Invalid language data format",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Convert to SetLanguageRequest struct
+			langJSON, _ := json.Marshal(langData)
+			var langReq models.SetLanguageRequest
+			if err := json.Unmarshal(langJSON, &langReq); err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "language_data",
+					Message:   "Failed to parse language data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Process language setup
+			response, err := h.socketService.HandleSetLanguage(langReq)
+			if err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeVerificationError,
+					ErrorType: models.ErrorTypeValidation,
+					Field:     "language",
+					Message:   err.Error(),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Set socket ID in response
+			response.SocketID = socket.Id
+			socket.Emit("language:set", response)
 		})
 
 		// Set profile handler
@@ -572,292 +722,6 @@ func (h *SocketIoHandler) setupSocketHandlers() {
 
 			log.Printf("📡 Game list update broadcasted to all connected clients via main:screen:game:list")
 		})
-
-		// Set profile handler
-		socket.On("set:profile", func(event *socketio.EventPayload) {
-
-			if len(event.Data) == 0 {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeMissingField,
-					ErrorType: models.ErrorTypeField,
-					Field:     "profile_data",
-					Message:   "No profile data provided",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Parse profile request
-			profileData, ok := event.Data[0].(map[string]interface{})
-			if !ok {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "profile_data",
-					Message:   "Invalid profile data format",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Convert to SetProfileRequest struct
-			profileJSON, _ := json.Marshal(profileData)
-			var profileReq models.SetProfileRequest
-			if err := json.Unmarshal(profileJSON, &profileReq); err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "profile_data",
-					Message:   "Failed to parse profile data",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Process profile setup
-			response, err := h.socketService.HandleSetProfile(profileReq)
-			if err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeVerificationError,
-					ErrorType: models.ErrorTypeValidation,
-					Field:     "profile",
-					Message:   err.Error(),
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Set socket ID in response
-			response.SocketID = socket.Id
-			socket.Emit("profile:set", response)
-		})
-
-		// Set language handler
-		socket.On("set:language", func(event *socketio.EventPayload) {
-
-			if len(event.Data) == 0 {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeMissingField,
-					ErrorType: models.ErrorTypeField,
-					Field:     "language_data",
-					Message:   "No language data provided",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Parse language request
-			langData, ok := event.Data[0].(map[string]interface{})
-			if !ok {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "language_data",
-					Message:   "Invalid language data format",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Convert to SetLanguageRequest struct
-			langJSON, _ := json.Marshal(langData)
-			var langReq models.SetLanguageRequest
-			if err := json.Unmarshal(langJSON, &langReq); err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "language_data",
-					Message:   "Failed to parse language data",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Process language setup
-			response, err := h.socketService.HandleSetLanguage(langReq)
-			if err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeVerificationError,
-					ErrorType: models.ErrorTypeValidation,
-					Field:     "language",
-					Message:   err.Error(),
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Set socket ID in response
-			response.SocketID = socket.Id
-			socket.Emit("language:set", response)
-		})
-
-		// Static message handler
-		socket.On("main:screen", func(event *socketio.EventPayload) {
-
-			if len(event.Data) == 0 {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeMissingField,
-					ErrorType: models.ErrorTypeField,
-					Field:     "main_screen_data",
-					Message:   "No main screen data provided",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Parse main screen request
-			mainData, ok := event.Data[0].(map[string]interface{})
-			if !ok {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "main_screen_data",
-					Message:   "Invalid main screen data format",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Convert to MainScreenRequest struct
-			mainJSON, _ := json.Marshal(mainData)
-			var mainReq models.MainScreenRequest
-			if err := json.Unmarshal(mainJSON, &mainReq); err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "main_screen_data",
-					Message:   "Failed to parse main screen data",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Validate required fields
-			if mainReq.MobileNo == "" {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeMissingField,
-					ErrorType: models.ErrorTypeField,
-					Field:     "mobile_no",
-					Message:   "Mobile number is required",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			if mainReq.FCMToken == "" {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeMissingField,
-					ErrorType: models.ErrorTypeField,
-					Field:     "fcm_token",
-					Message:   "FCM token is required",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			if mainReq.JWTToken == "" {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeMissingField,
-					ErrorType: models.ErrorTypeField,
-					Field:     "jwt_token",
-					Message:   "JWT token is required",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			if mainReq.DeviceID == "" {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeMissingField,
-					ErrorType: models.ErrorTypeField,
-					Field:     "device_id",
-					Message:   "Device ID is required",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Process main screen request with authentication validation
-			response, err := h.socketService.HandleMainScreen(mainReq)
-			if err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeVerificationError,
-					ErrorType: models.ErrorTypeAuthentication,
-					Field:     "main_screen",
-					Message:   err.Error(),
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Send only the gamelist data directly
-			socket.Emit("main:screen:game:list", response.Data)
-		})
-
 		// Heartbeat handler
 		socket.On("heartbeat", func(event *socketio.EventPayload) {
 			log.Printf("💓 Heartbeat received from %s", socket.Id)

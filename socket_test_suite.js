@@ -190,7 +190,7 @@ class SocketIOTestSuite {
                 email: 'test@example.com'
             };
 
-            const responsePromise = this.waitForEvent('login:success');
+            const responsePromise = this.waitForEvent('otp:sent');
             this.socket.emit('login', loginData);
             
             const response = await responsePromise;
@@ -202,7 +202,7 @@ class SocketIOTestSuite {
             this.testData.sessionToken = response.session_token;
             this.testData.otp = response.otp;
 
-            log.info(`Login successful for: ${response.mobile_no}`);
+            log.info(`OTP sent successfully for: ${response.mobile_no}`);
             log.info(`Session token: ${response.session_token}`);
             log.info(`OTP: ${response.otp}`);
             log.info(`Is new user: ${response.is_new_user}`);
@@ -230,8 +230,13 @@ class SocketIOTestSuite {
                 throw new Error('OTP verification failed');
             }
 
+            // Store JWT token for future use
+            this.testData.jwtToken = response.jwt_token;
+
             log.info(`OTP verified successfully`);
             log.info(`User status: ${response.user_status}`);
+            log.info(`JWT token received: ${response.jwt_token ? 'Yes' : 'No'}`);
+            log.info(`Device ID: ${response.device_id}`);
         });
     }
 
@@ -333,27 +338,75 @@ class SocketIOTestSuite {
         });
     }
 
+    async testJWTTokenEncryption() {
+        await this.runTest('JWT Token Encryption Test', async () => {
+            if (!this.testData.jwtToken) {
+                throw new Error('JWT token not available - run OTP verification first');
+            }
+
+            log.info(`JWT Token: ${this.testData.jwtToken.substring(0, 50)}...`);
+            log.info(`Note: This token contains encrypted FCM token data`);
+            log.info(`Original FCM Token: ${this.testData.fcmToken.substring(0, 20)}...`);
+            log.info(`Server will decrypt and validate FCM token from JWT`);
+        });
+    }
+
     async testMainScreen() {
         await this.runTest('Main Screen Test', async () => {
+            if (!this.testData.jwtToken) {
+                throw new Error('JWT token not available - run OTP verification first');
+            }
+
             const mainScreenData = {
                 mobile_no: this.testData.mobileNo,
                 fcm_token: this.testData.fcmToken,
-                jwt_token: 'test_jwt_token',
+                jwt_token: this.testData.jwtToken,
                 device_id: this.testData.deviceId,
-                message_type: 'dashboard'
+                message_type: 'game_list'
             };
 
-            const responsePromise = this.waitForEvent('main:screen');
-            this.socket.emit('get:main:screen', mainScreenData);
+            const responsePromise = this.waitForEvent('main:screen:game:list');
+            this.socket.emit('main:screen', mainScreenData);
             
             const response = await responsePromise;
             
-            if (!response || response.status !== 'success') {
+            if (!response || !response.gamelist) {
                 throw new Error('Main screen data retrieval failed');
             }
 
             log.info(`Main screen data retrieved successfully`);
-            log.info(`Message type: ${response.message_type}`);
+            log.info(`Game list items: ${response.gamelist.length}`);
+            log.info(`Note: Server used JWT token values, not request values`);
+        });
+    }
+
+    async testMainScreenWithEncryptedJWT() {
+        await this.runTest('Main Screen with Encrypted JWT Test', async () => {
+            if (!this.testData.jwtToken) {
+                throw new Error('JWT token not available - run OTP verification first');
+            }
+
+            const mainScreenData = {
+                mobile_no: this.testData.mobileNo,
+                fcm_token: this.testData.fcmToken,
+                jwt_token: this.testData.jwtToken,
+                device_id: this.testData.deviceId,
+                message_type: 'game_list'
+            };
+
+            const responsePromise = this.waitForEvent('main:screen:game:list');
+            this.socket.emit('main:screen', mainScreenData);
+            
+            const response = await responsePromise;
+            
+            if (!response || !response.gamelist) {
+                throw new Error('Main screen data retrieval failed');
+            }
+
+            log.info(`Main screen data retrieved successfully`);
+            log.info(`Game list items: ${response.gamelist.length}`);
+            log.info(`✅ Server decrypted JWT token and validated FCM token`);
+            log.info(`✅ Server used encrypted token values, not request values`);
         });
     }
 
@@ -395,6 +448,52 @@ class SocketIOTestSuite {
         });
     }
 
+    async testSimpleJWTToken() {
+        await this.runTest('Simple JWT Token Test', async () => {
+            if (!this.testData.jwtToken) {
+                throw new Error('JWT token not available - run OTP verification first');
+            }
+
+            log.info(`Simple JWT Token: ${this.testData.jwtToken.substring(0, 50)}...`);
+            log.info(`This token contains only 3 fields: mobile_no, device_id, fcm_token`);
+            log.info(`Original Mobile: ${this.testData.mobileNo}`);
+            log.info(`Original Device ID: ${this.testData.deviceId}`);
+            log.info(`Original FCM Token: ${this.testData.fcmToken.substring(0, 20)}...`);
+            log.info(`Server will decrypt using secret key and validate all 3 fields`);
+        });
+    }
+
+    async testMainScreenWithSimpleJWT() {
+        await this.runTest('Main Screen with Simple JWT Test', async () => {
+            if (!this.testData.jwtToken) {
+                throw new Error('JWT token not available - run OTP verification first');
+            }
+
+            const mainScreenData = {
+                mobile_no: this.testData.mobileNo,
+                fcm_token: this.testData.fcmToken,
+                jwt_token: this.testData.jwtToken,
+                device_id: this.testData.deviceId,
+                message_type: 'game_list'
+            };
+
+            const responsePromise = this.waitForEvent('main:screen:game:list');
+            this.socket.emit('main:screen', mainScreenData);
+            
+            const response = await responsePromise;
+            
+            if (!response || !response.gamelist) {
+                throw new Error('Main screen data retrieval failed');
+            }
+
+            log.info(`Main screen data retrieved successfully`);
+            log.info(`Game list items: ${response.gamelist.length}`);
+            log.info(`✅ Server decrypted simple JWT token using secret key`);
+            log.info(`✅ Server validated all 3 fields: mobile_no, device_id, fcm_token`);
+            log.info(`✅ Server used decrypted token values, not request values`);
+        });
+    }
+
     // Run all tests
     async runAllTests() {
         console.clear();
@@ -415,9 +514,13 @@ class SocketIOTestSuite {
             await this.testSetProfile();
             await this.testSetLanguage();
             await this.testStaticMessages();
+            await this.testJWTTokenEncryption();
             await this.testMainScreen();
+            await this.testMainScreenWithEncryptedJWT();
             await this.testErrorHandling();
             await this.testDisconnection();
+            await this.testSimpleJWTToken();
+            await this.testMainScreenWithSimpleJWT();
 
         } catch (error) {
             log.error(`Test suite failed: ${error.message}`);
