@@ -1,0 +1,6 @@
+go get github.com/gofiber/fiber/v2
+
+go get -u github.com/jmoiron/sqlx
+go get -u github.com/go-sql-driver/mysql
+
+go get gofiber/database
