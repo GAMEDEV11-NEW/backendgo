@@ -43,4 +43,90 @@ session.execute("""
       AND compaction = {'class': 'SizeTieredCompactionStrategy'}
 """)
 
-print("✅ Keyspace and table created successfully!")
+# Step 4: Create the users table
+session.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        mobile_no TEXT,
+        email TEXT,
+        full_name TEXT,
+        state TEXT,
+        referral_code TEXT,
+        referred_by TEXT,
+        profile_data TEXT,
+        language_code TEXT,
+        language_name TEXT,
+        region_code TEXT,
+        timezone TEXT,
+        user_preferences TEXT,
+        status TEXT,
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP
+    )
+""")
+
+# Step 5: Create the games table
+session.execute("""
+    CREATE TABLE IF NOT EXISTS games (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        description TEXT,
+        category TEXT,
+        icon TEXT,
+        banner TEXT,
+        min_players INT,
+        max_players INT,
+        difficulty TEXT,
+        rating DOUBLE,
+        is_active BOOLEAN,
+        is_featured BOOLEAN,
+        tags LIST<TEXT>,
+        metadata MAP<TEXT, TEXT>,
+        created_at TEXT,
+        updated_at TEXT
+    )
+""")
+
+# Step 6: Create the contests table
+session.execute("""
+    CREATE TABLE IF NOT EXISTS contests (
+        contest_id TEXT PRIMARY KEY,
+        contest_name TEXT,
+        contest_win_price TEXT,
+        contest_entryfee TEXT,
+        contest_joinuser INT,
+        contest_activeuser INT,
+        contest_starttime TEXT,
+        contest_endtime TEXT
+    )
+""")
+
+# Step 7: Create the server_announcements table
+session.execute("""
+    CREATE TABLE IF NOT EXISTS server_announcements (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        content TEXT,
+        type TEXT,
+        priority TEXT,
+        is_active BOOLEAN,
+        created_at TEXT
+    )
+""")
+
+# Step 8: Create the game_updates table
+session.execute("""
+    CREATE TABLE IF NOT EXISTS game_updates (
+        id TEXT PRIMARY KEY,
+        game_id TEXT,
+        version TEXT,
+        title TEXT,
+        description TEXT,
+        features LIST<TEXT>,
+        bug_fixes LIST<TEXT>,
+        is_required BOOLEAN,
+        created_at TEXT
+    )
+""")
+
+print("✅ All keyspace and tables created successfully!")
