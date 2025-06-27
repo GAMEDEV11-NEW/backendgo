@@ -417,156 +417,6 @@ func (h *SocketIoHandler) setupSocketHandlers() {
 			socket.Emit("language:set", response)
 		})
 
-		// Set profile handler
-		socket.On("set:profile", func(event *socketio.EventPayload) {
-
-			if len(event.Data) == 0 {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeMissingField,
-					ErrorType: models.ErrorTypeField,
-					Field:     "profile_data",
-					Message:   "No profile data provided",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Parse profile request
-			profileData, ok := event.Data[0].(map[string]interface{})
-			if !ok {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "profile_data",
-					Message:   "Invalid profile data format",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Convert to SetProfileRequest struct
-			profileJSON, _ := json.Marshal(profileData)
-			var profileReq models.SetProfileRequest
-			if err := json.Unmarshal(profileJSON, &profileReq); err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "profile_data",
-					Message:   "Failed to parse profile data",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Process profile setup
-			response, err := h.socketService.HandleSetProfile(profileReq)
-			if err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeVerificationError,
-					ErrorType: models.ErrorTypeValidation,
-					Field:     "profile",
-					Message:   err.Error(),
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Set socket ID in response
-			response.SocketID = socket.Id
-			socket.Emit("profile:set", response)
-		})
-
-		// Set language handler
-		socket.On("set:language", func(event *socketio.EventPayload) {
-
-			if len(event.Data) == 0 {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeMissingField,
-					ErrorType: models.ErrorTypeField,
-					Field:     "language_data",
-					Message:   "No language data provided",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Parse language request
-			langData, ok := event.Data[0].(map[string]interface{})
-			if !ok {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "language_data",
-					Message:   "Invalid language data format",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Convert to SetLanguageRequest struct
-			langJSON, _ := json.Marshal(langData)
-			var langReq models.SetLanguageRequest
-			if err := json.Unmarshal(langJSON, &langReq); err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeInvalidFormat,
-					ErrorType: models.ErrorTypeFormat,
-					Field:     "language_data",
-					Message:   "Failed to parse language data",
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Process language setup
-			response, err := h.socketService.HandleSetLanguage(langReq)
-			if err != nil {
-				errorResp := models.ConnectionError{
-					Status:    "error",
-					ErrorCode: models.ErrorCodeVerificationError,
-					ErrorType: models.ErrorTypeValidation,
-					Field:     "language",
-					Message:   err.Error(),
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-					SocketID:  socket.Id,
-					Event:     "connection_error",
-				}
-				socket.Emit("connection_error", errorResp)
-				return
-			}
-
-			// Set socket ID in response
-			response.SocketID = socket.Id
-			socket.Emit("language:set", response)
-		})
-
 		// Static message handler
 		socket.On("main:screen", func(event *socketio.EventPayload) {
 
@@ -722,6 +572,429 @@ func (h *SocketIoHandler) setupSocketHandlers() {
 
 			log.Printf("📡 Game list update broadcasted to all connected clients via main:screen:game:list")
 		})
+
+		socket.On("list:contest", func(event *socketio.EventPayload) {
+
+			if len(event.Data) == 0 {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "contest_data",
+					Message:   "No contest data provided",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Parse contest request
+			contestData, ok := event.Data[0].(map[string]interface{})
+			if !ok {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "contest_data",
+					Message:   "Invalid contest data format",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Convert to ContestRequest struct
+			contestJSON, _ := json.Marshal(contestData)
+			var contestReq models.ContestRequest
+			if err := json.Unmarshal(contestJSON, &contestReq); err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "contest_data",
+					Message:   "Failed to parse contest data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Validate required fields
+			if contestReq.MobileNo == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "mobile_no",
+					Message:   "Mobile number is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if contestReq.FCMToken == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "fcm_token",
+					Message:   "FCM token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if contestReq.JWTToken == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "jwt_token",
+					Message:   "JWT token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if contestReq.DeviceID == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "device_id",
+					Message:   "Device ID is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Process contest request with authentication validation
+			response, err := h.socketService.HandleContestList(contestReq)
+			log.Printf("🏆 Contest list request received - Data: %+v", response)
+			if err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeVerificationError,
+					ErrorType: models.ErrorTypeAuthentication,
+					Field:     "contest_list",
+					Message:   err.Error(),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Send contest list data
+			socket.Emit("contest:list:response", response)
+		})
+
+		// Contest join handler
+		socket.On("contest:join", func(event *socketio.EventPayload) {
+			log.Printf("🏆 Contest join request received from %s", socket.Id)
+
+			if len(event.Data) == 0 {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "join_data",
+					Message:   "No join data provided",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Parse contest join request
+			joinData, ok := event.Data[0].(map[string]interface{})
+			if !ok {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "join_data",
+					Message:   "Invalid join data format",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Convert to ContestJoinRequest struct
+			joinJSON, _ := json.Marshal(joinData)
+			var joinReq models.ContestJoinRequest
+			if err := json.Unmarshal(joinJSON, &joinReq); err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "join_data",
+					Message:   "Failed to parse join data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Validate required fields
+			if joinReq.MobileNo == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "mobile_no",
+					Message:   "Mobile number is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if joinReq.FCMToken == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "fcm_token",
+					Message:   "FCM token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if joinReq.JWTToken == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "jwt_token",
+					Message:   "JWT token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if joinReq.DeviceID == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "device_id",
+					Message:   "Device ID is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if joinReq.ContestID == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "contest_id",
+					Message:   "Contest ID is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Process contest join request
+			response, err := h.socketService.HandleContestJoin(joinReq)
+			if err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeVerificationError,
+					ErrorType: models.ErrorTypeAuthentication,
+					Field:     "contest_join",
+					Message:   err.Error(),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Send contest join response
+			socket.Emit("contest:join:response", response)
+		})
+
+		// Contest price gap handler
+		socket.On("list:contest:gap", func(event *socketio.EventPayload) {
+			log.Printf("💰 Contest price gap request received from %s", socket.Id)
+
+			if len(event.Data) == 0 {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "gap_data",
+					Message:   "No gap data provided",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Parse contest gap request
+			gapData, ok := event.Data[0].(map[string]interface{})
+			if !ok {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "gap_data",
+					Message:   "Invalid gap data format",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Convert to ContestGapRequest struct
+			gapJSON, _ := json.Marshal(gapData)
+			var gapReq models.ContestGapRequest
+			if err := json.Unmarshal(gapJSON, &gapReq); err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "gap_data",
+					Message:   "Failed to parse gap data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Validate required fields
+			if gapReq.MobileNo == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "mobile_no",
+					Message:   "Mobile number is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if gapReq.FCMToken == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "fcm_token",
+					Message:   "FCM token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if gapReq.JWTToken == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "jwt_token",
+					Message:   "JWT token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			if gapReq.DeviceID == "" {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "device_id",
+					Message:   "Device ID is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Process contest gap request
+			response, err := h.socketService.HandleContestGap(gapReq)
+			if err != nil {
+				errorResp := models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeVerificationError,
+					ErrorType: models.ErrorTypeAuthentication,
+					Field:     "contest_gap",
+					Message:   err.Error(),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				}
+				socket.Emit("connection_error", errorResp)
+				return
+			}
+
+			// Send contest gap response
+			socket.Emit("list:contest:gap:response", response)
+		})
+
 		// Heartbeat handler
 		socket.On("heartbeat", func(event *socketio.EventPayload) {
 			log.Printf("💓 Heartbeat received from %s", socket.Id)

@@ -387,3 +387,88 @@ const (
 	ErrorTypeValidation     = "VALIDATION_ERROR"
 	ErrorTypeSystem         = "SYSTEM_ERROR"
 )
+
+// ContestRequest represents contest list request
+type ContestRequest struct {
+	MobileNo    string `json:"mobile_no"`
+	FCMToken    string `json:"fcm_token"`
+	JWTToken    string `json:"jwt_token"`
+	DeviceID    string `json:"device_id"`
+	MessageType string `json:"message_type"` // "contest_list", "contest_details", "contest_join"
+	ContestID   string `json:"contest_id,omitempty"`
+}
+
+// ContestResponse represents contest list response
+type ContestResponse struct {
+	Status      string                 `json:"status"`
+	Message     string                 `json:"message"`
+	MobileNo    string                 `json:"mobile_no"`
+	DeviceID    string                 `json:"device_id"`
+	MessageType string                 `json:"message_type"`
+	Data        map[string]interface{} `json:"data"`
+	UserInfo    map[string]interface{} `json:"user_info"`
+	Timestamp   string                 `json:"timestamp"`
+	SocketID    string                 `json:"socket_id"`
+	Event       string                 `json:"event"`
+}
+
+// Contest represents a contest in the system
+type Contest struct {
+	ContestID         string      `json:"contest_id"`
+	ContestName       string      `json:"contest_name"`
+	ContestWinPrice   interface{} `json:"contest_win_price"`
+	ContestEntryFee   interface{} `json:"contest_entryfee"`
+	ContestJoinUser   int         `json:"contest_joinuser"`
+	ContestActiveUser int         `json:"contest_activeuser"`
+	ContestStartTime  string      `json:"contest_starttime"`
+	ContestEndTime    string      `json:"contest_endtime"`
+}
+
+// ContestJoinRequest represents contest join request
+type ContestJoinRequest struct {
+	MobileNo  string `json:"mobile_no"`
+	FCMToken  string `json:"fcm_token"`
+	JWTToken  string `json:"jwt_token"`
+	DeviceID  string `json:"device_id"`
+	ContestID string `json:"contest_id"`
+	TeamName  string `json:"team_name,omitempty"`
+	TeamSize  int    `json:"team_size,omitempty"`
+}
+
+// ContestJoinResponse represents contest join response
+type ContestJoinResponse struct {
+	Status    string                 `json:"status"`
+	Message   string                 `json:"message"`
+	MobileNo  string                 `json:"mobile_no"`
+	DeviceID  string                 `json:"device_id"`
+	ContestID string                 `json:"contest_id"`
+	TeamID    string                 `json:"team_id,omitempty"`
+	JoinTime  string                 `json:"join_time"`
+	Data      map[string]interface{} `json:"data"`
+	Timestamp string                 `json:"timestamp"`
+	SocketID  string                 `json:"socket_id"`
+	Event     string                 `json:"event"`
+}
+
+// ContestGapRequest represents contest price gap request
+type ContestGapRequest struct {
+	MobileNo    string `json:"mobile_no"`
+	FCMToken    string `json:"fcm_token"`
+	JWTToken    string `json:"jwt_token"`
+	DeviceID    string `json:"device_id"`
+	MessageType string `json:"message_type"` // "price_gap", "entry_fee_gap", "win_price_gap"
+}
+
+// ContestGapResponse represents contest price gap response
+type ContestGapResponse struct {
+	Status      string                 `json:"status"`
+	Message     string                 `json:"message"`
+	MobileNo    string                 `json:"mobile_no"`
+	DeviceID    string                 `json:"device_id"`
+	MessageType string                 `json:"message_type"`
+	Data        map[string]interface{} `json:"data"`
+	UserInfo    map[string]interface{} `json:"user_info"`
+	Timestamp   string                 `json:"timestamp"`
+	SocketID    string                 `json:"socket_id"`
+	Event       string                 `json:"event"`
+}

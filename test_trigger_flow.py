@@ -76,32 +76,6 @@ def test_trigger_flow():
                     "livegameplaye": 600,
                     "status": "active",
                     "created_at": datetime.now().isoformat()
-                },{
-                    "game_id": "test_game_2",
-                    "game_name": "Test Rummy",
-                    "game_type": "card",
-                    "active_gamepalye": 1000,
-                    "livegameplaye": 600,
-                    "status": "active",
-                    "created_at": datetime.now().isoformat()
-                },
-                {
-                    "game_id": "test_game_2",
-                    "game_name": "Test Rummy",
-                    "game_type": "card",
-                    "active_gamepalye": 1000,
-                    "livegameplaye": 600,
-                    "status": "active",
-                    "created_at": datetime.now().isoformat()
-                },
-                {
-                    "game_id": "test_game_2",
-                    "game_name": "Test Rummy",
-                    "game_type": "card",
-                    "active_gamepalye": 1000,
-                    "livegameplaye": 600,
-                    "status": "active",
-                    "created_at": datetime.now().isoformat()
                 }
             ],
             "updated_at": datetime.now().isoformat(),

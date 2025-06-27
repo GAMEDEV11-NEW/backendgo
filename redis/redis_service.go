@@ -159,6 +159,11 @@ func (r *Service) CacheGameList(data map[string]interface{}, expiration time.Dur
 	return r.Set(key, data, expiration)
 }
 
+func (r *Service) CacheListContest(data map[string]interface{}, expiration time.Duration) error {
+	key := "listcontest:current"
+	return r.Set(key, data, expiration)
+}
+
 // GetGameList retrieves game list data from Redis
 func (r *Service) GetGameList() (map[string]interface{}, error) {
 	key := "gamelist:current"
@@ -168,6 +173,16 @@ func (r *Service) GetGameList() (map[string]interface{}, error) {
 		return nil, err
 	}
 	return gameList, nil
+}
+
+func (r *Service) GetListContest() (map[string]interface{}, error) {
+	key := "listcontest:current"
+	var listContest map[string]interface{}
+	err := r.Get(key, &listContest)
+	if err != nil {
+		return nil, err
+	}
+	return listContest, nil
 }
 
 // CacheUserData stores user data in Redis

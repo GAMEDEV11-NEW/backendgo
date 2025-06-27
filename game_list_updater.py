@@ -7,7 +7,6 @@ Updates game list in Redis and sends real-time notifications to connected Socket
 import json
 import time
 import random
-import requests
 from datetime import datetime
 import socketio
 import threading

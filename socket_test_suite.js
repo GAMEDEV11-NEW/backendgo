@@ -494,6 +494,86 @@ class SocketIOTestSuite {
         });
     }
 
+    async testContestList() {
+        await this.runTest('Contest List Test', async () => {
+            if (!this.testData.jwtToken) {
+                throw new Error('JWT token not available - run OTP verification first');
+            }
+
+            const contestData = {
+                mobile_no: this.testData.mobileNo,
+                fcm_token: this.testData.fcmToken,
+                jwt_token: this.testData.jwtToken,
+                device_id: this.testData.deviceId,
+                message_type: 'contest_list'
+            };
+
+            const responsePromise = this.waitForEvent('contest:list:response');
+            this.socket.emit('list:contest', contestData);
+            
+            const response = await responsePromise;
+            
+            if (!response || response.status !== 'success') {
+                throw new Error('Contest list data retrieval failed');
+            }
+
+            log.info(`Contest list data retrieved successfully`);
+            log.info(`Status: ${response.status}`);
+            log.info(`Message: ${response.message}`);
+            log.info(`Event: ${response.event}`);
+            
+            if (response.data && response.data.gamelist) {
+                log.info(`Contest list items: ${response.data.gamelist.length}`);
+                
+                // Display first contest details
+                if (response.data.gamelist.length > 0) {
+                    const firstContest = response.data.gamelist[0];
+                    log.info(`First contest: ${firstContest.contestName}`);
+                    log.info(`Contest ID: ${firstContest.contestId}`);
+                    log.info(`Status: ${firstContest.status}`);
+                    log.info(`Difficulty: ${firstContest.difficulty}`);
+                    log.info(`Participants: ${firstContest.currentParticipants}/${firstContest.maxParticipants}`);
+                }
+            } else {
+                log.warning('No contest data found in response');
+            }
+        });
+    }
+
+    async testContestJoin() {
+        await this.runTest('Contest Join Test', async () => {
+            if (!this.testData.jwtToken) {
+                throw new Error('JWT token not available - run OTP verification first');
+            }
+
+            const joinData = {
+                mobile_no: this.testData.mobileNo,
+                fcm_token: this.testData.fcmToken,
+                jwt_token: this.testData.jwtToken,
+                device_id: this.testData.deviceId,
+                contest_id: 'contest_123',
+                team_name: 'Test Team',
+                team_size: 2
+            };
+
+            const responsePromise = this.waitForEvent('contest:join:response');
+            this.socket.emit('contest:join', joinData);
+            
+            const response = await responsePromise;
+            
+            if (!response || response.status !== 'success') {
+                throw new Error('Contest join failed');
+            }
+
+            log.info(`Contest join successful`);
+            log.info(`Status: ${response.status}`);
+            log.info(`Message: ${response.message}`);
+            log.info(`Contest ID: ${response.contest_id}`);
+            log.info(`Team ID: ${response.team_id || 'N/A'}`);
+            log.info(`Join Time: ${response.join_time}`);
+        });
+    }
+
     // Run all tests
     async runAllTests() {
         console.clear();
@@ -521,6 +601,8 @@ class SocketIOTestSuite {
             await this.testDisconnection();
             await this.testSimpleJWTToken();
             await this.testMainScreenWithSimpleJWT();
+            await this.testContestList();
+            await this.testContestJoin();
 
         } catch (error) {
             log.error(`Test suite failed: ${error.message}`);
@@ -657,6 +739,7 @@ async function showIndividualTests() {
                 { name: '👤 Profile Tests', value: 'profile' },
                 { name: '🌐 Language Tests', value: 'language' },
                 { name: '📱 Device Tests', value: 'device' },
+                { name: '🏆 Contest Tests', value: 'contest' },
                 { name: '❌ Error Handling Tests', value: 'error' }
             ]
         }
@@ -684,6 +767,10 @@ async function showIndividualTests() {
                 break;
             case 'device':
                 await testSuite.testDeviceInfo();
+                break;
+            case 'contest':
+                await testSuite.testContestList();
+                await testSuite.testContestJoin();
                 break;
             case 'error':
                 await testSuite.testErrorHandling();
@@ -726,6 +813,8 @@ function showDocumentation() {
     console.log('• set:language - Language preferences');
     console.log('• get:static:message - Static content retrieval');
     console.log('• get:main:screen - Main screen data');
+    console.log('• list:contest - Contest list retrieval');
+    console.log('• contest:join - Contest participation');
     console.log('• connection_error - Error responses');
     
     console.log(chalk.yellow('\n🧪 Test Coverage:'));
@@ -735,8 +824,15 @@ function showDocumentation() {
     console.log('• User profile management');
     console.log('• Language and localization settings');
     console.log('• Static message retrieval');
-    console.log('• Error handling and validation');
     console.log('• Main screen data flow');
+    console.log('• Contest list and participation');
+    console.log('• Error handling and validation');
+    
+    console.log(chalk.yellow('\n🏆 Contest Features:'));
+    console.log('• Contest list retrieval with authentication');
+    console.log('• Contest participation and team creation');
+    console.log('• Real-time contest data updates');
+    console.log('• Contest status and participant tracking');
     
     console.log(chalk.yellow('\n⚙️  Configuration:'));
     console.log(`• Server URL: ${CONFIG.SERVER_URL}`);

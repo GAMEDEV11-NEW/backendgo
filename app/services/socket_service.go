@@ -11,6 +11,7 @@ import (
 	"log"
 	"math"
 	"math/big"
+	"sort"
 	"strconv"
 	"time"
 
@@ -553,14 +554,18 @@ func (s *SocketService) HandleStaticMessage(staticReq models.StaticMessageReques
 		return nil, fmt.Errorf("invalid or expired session")
 	}
 
-	// Prepare response data based on message type
-	var responseData map[string]interface{}
-
-	switch staticReq.MessageType {
-	case "game_list":
-		responseData = s.getGameListData()
-	default:
-		return nil, fmt.Errorf("unknown message type: %s", staticReq.MessageType)
+	// Prepare response data - only use sub_list
+	log.Printf("🔍 Calling getGameSubListData() from HandleStaticMessage")
+	responseData := s.getGameSubListData()
+	log.Printf("📊 Response data received in HandleStaticMessage: %+v", responseData)
+	log.Printf("🔍 Response data type: %T", responseData)
+	if responseData != nil {
+		log.Printf("📊 Response data keys: %v", getMapKeys(responseData))
+		if gamelist, exists := responseData["gamelist"]; exists {
+			if list, ok := gamelist.([]map[string]interface{}); ok {
+				log.Printf("📊 Number of contests in response: %d", len(list))
+			}
+		}
 	}
 
 	log.Printf("Static message processed successfully for %s", staticReq.MobileNo)
@@ -593,7 +598,7 @@ func (s *SocketService) getGameListData() map[string]interface{} {
 	// Generate fresh game list data
 	gamelist := []map[string]interface{}{
 		{
-			"game_id":          "simple_1",
+			"game_id":          "1",
 			"game_name":        "Simple Ludo",
 			"game_type":        "board",
 			"active_gamepalye": 1500,
@@ -603,17 +608,17 @@ func (s *SocketService) getGameListData() map[string]interface{} {
 		},
 		{
 			"game_id":          "2",
-			"game_name":        "Test Rummy",
-			"game_type":        "card",
+			"game_name":        "Classic Ludo",
+			"game_type":        "board",
 			"active_gamepalye": 1000,
 			"livegameplaye":    600,
 			"status":           "active",
 			"created_at":       time.Now().UTC().Format(time.RFC3339),
 		},
 		{
-			"game_id":          "test_game_3",
-			"game_name":        "Test Teen Patti",
-			"game_type":        "card",
+			"game_id":          "3",
+			"game_name":        "Quick Ludo",
+			"game_type":        "board",
 			"active_gamepalye": 2000,
 			"livegameplaye":    1200,
 			"status":           "active",
@@ -651,44 +656,138 @@ func (s *SocketService) GetGameListDataPublic() map[string]interface{} {
 	return s.getGameListData()
 }
 
+// convertContestDataTypes converts float64 values back to integers in contest data
+func (s *SocketService) convertContestDataTypes(data map[string]interface{}) map[string]interface{} {
+	if gamelist, exists := data["gamelist"]; exists {
+		if contests, ok := gamelist.([]interface{}); ok {
+			for _, contest := range contests {
+				if contestMap, ok := contest.(map[string]interface{}); ok {
+					// Convert contest_id
+					if contestID, exists := contestMap["contest_id"]; exists {
+						if floatID, ok := contestID.(float64); ok {
+							contestMap["contest_id"] = int(floatID)
+						}
+					}
+
+					// Convert contest_joinuser
+					if joinUser, exists := contestMap["contest_joinuser"]; exists {
+						if floatJoin, ok := joinUser.(float64); ok {
+							contestMap["contest_joinuser"] = int(floatJoin)
+						}
+					}
+
+					// Convert contest_activeuser
+					if activeUser, exists := contestMap["contest_activeuser"]; exists {
+						if floatActive, ok := activeUser.(float64); ok {
+							contestMap["contest_activeuser"] = int(floatActive)
+						}
+					}
+
+					// Convert contest_win_price (keep as interface{} to support both int and float)
+					if winPrice, exists := contestMap["contest_win_price"]; exists {
+						if floatPrice, ok := winPrice.(float64); ok {
+							// Check if it's a whole number
+							if floatPrice == float64(int(floatPrice)) {
+								contestMap["contest_win_price"] = int(floatPrice)
+							} else {
+								contestMap["contest_win_price"] = floatPrice
+							}
+						}
+					}
+
+					// Convert contest_entryfee (keep as interface{} to support both int and float)
+					if entryFee, exists := contestMap["contest_entryfee"]; exists {
+						if floatFee, ok := entryFee.(float64); ok {
+							// Check if it's a whole number
+							if floatFee == float64(int(floatFee)) {
+								contestMap["contest_entryfee"] = int(floatFee)
+							} else {
+								contestMap["contest_entryfee"] = floatFee
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return data
+}
+
 // getGameListData returns sample game list data with Redis caching
 func (s *SocketService) getGameSubListData() map[string]interface{} {
+
 	// Try to get from Redis cache first
 	if s.redisService != nil {
-		cachedData, err := s.redisService.GetGameList()
+		cachedData, err := s.redisService.GetListContest()
 		if err == nil {
-			log.Printf("📖 Game list retrieved from Redis cache")
-			return cachedData
+			// Convert data types after retrieving from cache
+			convertedData := s.convertContestDataTypes(cachedData)
+			return convertedData
 		}
-		log.Printf("📝 Game list not found in cache, generating fresh data")
+	} else {
 	}
 
-	// Generate fresh game list data
+	// Generate fresh game list data with proper integer types
 	gamelist := []map[string]interface{}{
 		{
-			"active_gamepalye": 12313,
-			"livegameplaye":    12313,
-			"game name":        "newgame",
+			"contest_id":         1,
+			"contest_name":       "Weekly Algorithm Challenge",
+			"contest_win_price":  5000,
+			"contest_entryfee":   50,
+			"contest_joinuser":   1000,
+			"contest_activeuser": 847,
+			"contest_starttime":  "2025-07-01T09:00:00Z",
+			"contest_endtime":    "2025-07-07T23:59:59Z",
 		},
 		{
-			"active_gamepalye": 12313,
-			"livegameplaye":    12313,
-			"game name":        "newgame",
+			"contest_id":         2,
+			"contest_name":       "Data Science Hackathon",
+			"contest_win_price":  10000,
+			"contest_entryfee":   100,
+			"contest_joinuser":   500,
+			"contest_activeuser": 423,
+			"contest_starttime":  "2025-06-15T10:00:00Z",
+			"contest_endtime":    "2025-06-20T18:00:00Z",
 		},
 		{
-			"active_gamepalye": 12313,
-			"livegameplaye":    12313,
-			"game name":        "newgame",
+			"contest_id":         3,
+			"contest_name":       "Frontend Development Sprint",
+			"contest_win_price":  3000,
+			"contest_entryfee":   30,
+			"contest_joinuser":   300,
+			"contest_activeuser": 298,
+			"contest_starttime":  "2025-06-10T08:00:00Z",
+			"contest_endtime":    "2025-06-12T20:00:00Z",
 		},
 		{
-			"active_gamepalye": 12313,
-			"livegameplaye":    12313,
-			"game name":        "newgame",
+			"contest_id":         4,
+			"contest_name":       "Mobile App Innovation",
+			"contest_win_price":  8000,
+			"contest_entryfee":   80,
+			"contest_joinuser":   800,
+			"contest_activeuser": 156,
+			"contest_starttime":  "2025-07-15T09:00:00Z",
+			"contest_endtime":    "2025-07-25T23:59:59Z",
 		},
 		{
-			"active_gamepalye": 12313,
-			"livegameplaye":    12313,
-			"game name":        "newgame",
+			"contest_id":         5,
+			"contest_name":       "Blockchain Smart Contract Challenge",
+			"contest_win_price":  5.0,
+			"contest_entryfee":   0.1,
+			"contest_joinuser":   400,
+			"contest_activeuser": 89,
+			"contest_starttime":  "2025-07-05T10:00:00Z",
+			"contest_endtime":    "2025-07-10T18:00:00Z",
+		},
+		{
+			"contest_id":         6,
+			"contest_name":       "AI Chatbot Competition",
+			"contest_win_price":  4000,
+			"contest_entryfee":   40,
+			"contest_joinuser":   600,
+			"contest_activeuser": 567,
+			"contest_starttime":  "2025-06-25T09:00:00Z",
+			"contest_endtime":    "2025-06-27T17:00:00Z",
 		},
 	}
 
@@ -698,15 +797,24 @@ func (s *SocketService) getGameSubListData() map[string]interface{} {
 
 	// Cache the data in Redis for 5 minutes
 	if s.redisService != nil {
-		err := s.redisService.CacheGameList(gameListData, 5*time.Minute)
+		err := s.redisService.CacheListContest(gameListData, 5*time.Minute)
+
 		if err != nil {
-			log.Printf("⚠️ Failed to cache game list in Redis: %v", err)
+			log.Printf("⚠️ Failed to cache contest list in Redis: %v", err)
 		} else {
-			log.Printf("📝 Game list cached in Redis for 5 minutes")
+			log.Printf("📝 Contest list cached in Redis for 5 minutes")
 		}
 	}
-
 	return gameListData
+}
+
+// Helper function to get map keys for debugging
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // HandleMainScreen handles main screen requests with authentication validation
@@ -771,17 +879,8 @@ func (s *SocketService) HandleMainScreen(mainReq models.MainScreenRequest) (*mod
 		return nil, fmt.Errorf("FCM token too short or invalid")
 	}
 
-	// Prepare response data based on message type
-	var responseData map[string]interface{}
-
-	switch mainReq.MessageType {
-	case "game_list":
-		responseData = s.getGameListData()
-	case "sub_list":
-		responseData = s.getGameSubListData()
-	default:
-		return nil, fmt.Errorf("unknown message type: %s", mainReq.MessageType)
-	}
+	// Prepare response data - only use sub_list
+	responseData := s.getGameListData()
 
 	log.Printf("Main screen processed successfully for %s", tokenMobileNo)
 
@@ -803,4 +902,570 @@ func (s *SocketService) HandleMainScreen(mainReq models.MainScreenRequest) (*mod
 		SocketID:  "",
 		Event:     "main:screen:response",
 	}, nil
+}
+
+// HandleContestList handles contest list requests with authentication validation
+func (s *SocketService) HandleContestList(contestReq models.ContestRequest) (*models.ContestResponse, error) {
+	// Create context for database operations
+	ctx := context.Background()
+
+	// Decrypt the simple JWT token to get the original values used during token creation
+	simpleJWTData, err := utils.ValidateSimpleJWTToken(contestReq.JWTToken)
+	if err != nil {
+		return nil, fmt.Errorf("simple JWT token validation failed: %v", err)
+	}
+
+	// Extract values from the decrypted JWT token
+	tokenMobileNo := simpleJWTData.MobileNo
+	tokenDeviceID := simpleJWTData.DeviceID
+	tokenFCMToken := simpleJWTData.FCMToken
+
+	// Validate mobile number from token
+	if len(tokenMobileNo) < 10 {
+		return nil, fmt.Errorf("invalid mobile number in JWT token")
+	}
+
+	// Validate device ID from token
+	if len(tokenDeviceID) < 1 {
+		return nil, fmt.Errorf("invalid device ID in JWT token")
+	}
+
+	// Check if user exists and is active using token mobile number
+	var user models.User
+	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": tokenMobileNo}).Decode(&user)
+	if err != nil {
+		return nil, fmt.Errorf("user not found or not authenticated")
+	}
+
+	// Check if session exists and is active using token values
+	var session models.Session
+	err = s.sessionsCollection.FindOne(ctx, bson.M{
+		"mobile_no":  tokenMobileNo,
+		"device_id":  tokenDeviceID,
+		"is_active":  true,
+		"expires_at": bson.M{"$gt": time.Now()},
+	}).Decode(&session)
+
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired session")
+	}
+
+	// Verify JWT token matches stored token
+	if session.JWTToken != contestReq.JWTToken {
+		return nil, fmt.Errorf("JWT token mismatch with stored token")
+	}
+
+	// Verify FCM token from JWT token matches the one in request
+	if tokenFCMToken != contestReq.FCMToken {
+		return nil, fmt.Errorf("FCM token mismatch - JWT token contains: %s, request contains: %s",
+			tokenFCMToken[:20]+"...", contestReq.FCMToken[:20]+"...")
+	}
+
+	// Validate FCM token length
+	if len(contestReq.FCMToken) < 100 {
+		return nil, fmt.Errorf("FCM token too short or invalid")
+	}
+
+	// Get contest list data specifically
+
+	responseData := s.getGameSubListData()
+	if responseData != nil {
+		log.Printf("📊 Response data keys: %v", getMapKeys(responseData))
+		if gamelist, exists := responseData["gamelist"]; exists {
+			if list, ok := gamelist.([]map[string]interface{}); ok {
+				log.Printf("📊 Number of contests in response: %d", len(list))
+			}
+		}
+	}
+
+	return &models.ContestResponse{
+		Status:      "success",
+		Message:     "Contest list data retrieved successfully",
+		MobileNo:    tokenMobileNo, // Use token mobile number
+		DeviceID:    tokenDeviceID, // Use token device ID
+		MessageType: contestReq.MessageType,
+		Data:        responseData,
+		UserInfo: map[string]interface{}{
+			"user_id":   user.ID,
+			"mobile_no": user.MobileNo,
+			"full_name": user.FullName,
+			"status":    user.Status,
+			"language":  user.LanguageCode,
+		},
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		SocketID:  "",
+		Event:     "contest:list:response",
+	}, nil
+}
+
+// HandleContestJoin handles contest join requests
+func (s *SocketService) HandleContestJoin(joinReq models.ContestJoinRequest) (*models.ContestJoinResponse, error) {
+	// Create context for database operations
+	ctx := context.Background()
+
+	// Decrypt the simple JWT token to get the original values used during token creation
+	simpleJWTData, err := utils.ValidateSimpleJWTToken(joinReq.JWTToken)
+	if err != nil {
+		return nil, fmt.Errorf("simple JWT token validation failed: %v", err)
+	}
+
+	// Extract values from the decrypted JWT token
+	tokenMobileNo := simpleJWTData.MobileNo
+	tokenDeviceID := simpleJWTData.DeviceID
+	tokenFCMToken := simpleJWTData.FCMToken
+
+	// Validate mobile number from token
+	if len(tokenMobileNo) < 10 {
+		return nil, fmt.Errorf("invalid mobile number in JWT token")
+	}
+
+	// Validate device ID from token
+	if len(tokenDeviceID) < 1 {
+		return nil, fmt.Errorf("invalid device ID in JWT token")
+	}
+
+	// Check if user exists and is active using token mobile number
+	var user models.User
+	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": tokenMobileNo}).Decode(&user)
+	if err != nil {
+		return nil, fmt.Errorf("user not found or not authenticated")
+	}
+
+	// Check if session exists and is active using token values
+	var session models.Session
+	err = s.sessionsCollection.FindOne(ctx, bson.M{
+		"mobile_no":  tokenMobileNo,
+		"device_id":  tokenDeviceID,
+		"is_active":  true,
+		"expires_at": bson.M{"$gt": time.Now()},
+	}).Decode(&session)
+
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired session")
+	}
+
+	// Verify JWT token matches stored token
+	if session.JWTToken != joinReq.JWTToken {
+		return nil, fmt.Errorf("JWT token mismatch with stored token")
+	}
+
+	// Verify FCM token from JWT token matches the one in request
+	if tokenFCMToken != joinReq.FCMToken {
+		return nil, fmt.Errorf("FCM token mismatch - JWT token contains: %s, request contains: %s",
+			tokenFCMToken[:20]+"...", joinReq.FCMToken[:20]+"...")
+	}
+
+	// Validate FCM token length
+	if len(joinReq.FCMToken) < 100 {
+		return nil, fmt.Errorf("FCM token too short or invalid")
+	}
+
+	// Validate contest ID
+	if joinReq.ContestID == "" {
+		return nil, fmt.Errorf("contest ID is required")
+	}
+
+	// Generate team ID if team name is provided
+	teamID := ""
+	if joinReq.TeamName != "" {
+		teamID = fmt.Sprintf("team_%s_%s", joinReq.ContestID, time.Now().Format("20060102150405"))
+	}
+
+	log.Printf("Contest join processed successfully for %s - Contest: %s", tokenMobileNo, joinReq.ContestID)
+
+	return &models.ContestJoinResponse{
+		Status:    "success",
+		Message:   "Successfully joined contest",
+		MobileNo:  tokenMobileNo,
+		DeviceID:  tokenDeviceID,
+		ContestID: joinReq.ContestID,
+		TeamID:    teamID,
+		JoinTime:  time.Now().UTC().Format(time.RFC3339),
+		Data: map[string]interface{}{
+			"contest_id":  joinReq.ContestID,
+			"team_name":   joinReq.TeamName,
+			"team_size":   joinReq.TeamSize,
+			"join_status": "confirmed",
+			"next_steps":  "Wait for contest start",
+		},
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		SocketID:  "",
+		Event:     "contest:join:response",
+	}, nil
+}
+
+// HandleListContestScreen handles contest list screen requests with authentication validation
+func (s *SocketService) HandleListContestScreen(mainReq models.MainScreenRequest) (*models.MainScreenResponse, error) {
+	// Convert MainScreenRequest to ContestRequest for consistency
+	contestReq := models.ContestRequest{
+		MobileNo:    mainReq.MobileNo,
+		FCMToken:    mainReq.FCMToken,
+		JWTToken:    mainReq.JWTToken,
+		DeviceID:    mainReq.DeviceID,
+		MessageType: mainReq.MessageType,
+	}
+
+	// Use the dedicated contest handler
+	contestResponse, err := s.HandleContestList(contestReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert ContestResponse back to MainScreenResponse for backward compatibility
+	return &models.MainScreenResponse{
+		Status:      contestResponse.Status,
+		Message:     contestResponse.Message,
+		MobileNo:    contestResponse.MobileNo,
+		DeviceID:    contestResponse.DeviceID,
+		MessageType: contestResponse.MessageType,
+		Data:        contestResponse.Data,
+		UserInfo:    contestResponse.UserInfo,
+		Timestamp:   contestResponse.Timestamp,
+		SocketID:    contestResponse.SocketID,
+		Event:       contestResponse.Event,
+	}, nil
+}
+
+// HandleContestGap handles contest price gap requests with authentication validation
+func (s *SocketService) HandleContestGap(gapReq models.ContestGapRequest) (*models.ContestGapResponse, error) {
+	// Create context for database operations
+	ctx := context.Background()
+
+	// Decrypt the simple JWT token to get the original values used during token creation
+	simpleJWTData, err := utils.ValidateSimpleJWTToken(gapReq.JWTToken)
+	if err != nil {
+		return nil, fmt.Errorf("simple JWT token validation failed: %v", err)
+	}
+
+	// Extract values from the decrypted JWT token
+	tokenMobileNo := simpleJWTData.MobileNo
+	tokenDeviceID := simpleJWTData.DeviceID
+	tokenFCMToken := simpleJWTData.FCMToken
+
+	// Validate mobile number from token
+	if len(tokenMobileNo) < 10 {
+		return nil, fmt.Errorf("invalid mobile number in JWT token")
+	}
+
+	// Validate device ID from token
+	if len(tokenDeviceID) < 1 {
+		return nil, fmt.Errorf("invalid device ID in JWT token")
+	}
+
+	// Check if user exists and is active using token mobile number
+	var user models.User
+	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": tokenMobileNo}).Decode(&user)
+	if err != nil {
+		return nil, fmt.Errorf("user not found or not authenticated")
+	}
+
+	// Check if session exists and is active using token values
+	var session models.Session
+	err = s.sessionsCollection.FindOne(ctx, bson.M{
+		"mobile_no":  tokenMobileNo,
+		"device_id":  tokenDeviceID,
+		"is_active":  true,
+		"expires_at": bson.M{"$gt": time.Now()},
+	}).Decode(&session)
+
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired session")
+	}
+
+	// Verify JWT token matches stored token
+	if session.JWTToken != gapReq.JWTToken {
+		return nil, fmt.Errorf("JWT token mismatch with stored token")
+	}
+
+	// Verify FCM token from JWT token matches the one in request
+	if tokenFCMToken != gapReq.FCMToken {
+		return nil, fmt.Errorf("FCM token mismatch - JWT token contains: %s, request contains: %s",
+			tokenFCMToken[:20]+"...", gapReq.FCMToken[:20]+"...")
+	}
+
+	// Validate FCM token length
+	if len(gapReq.FCMToken) < 100 {
+		return nil, fmt.Errorf("FCM token too short or invalid")
+	}
+
+	// Get contest list data and calculate price gaps
+	allContests := s.getGameSubListData()
+
+	// Calculate price gap data
+	gapData := s.calculatePriceGapData(allContests, gapReq)
+
+	log.Printf("💰 Contest price gap processed successfully for %s - Type: %s", tokenMobileNo, gapReq.MessageType)
+
+	return &models.ContestGapResponse{
+		Status:      "success",
+		Message:     "Contest price gap data retrieved successfully",
+		MobileNo:    tokenMobileNo, // Use token mobile number
+		DeviceID:    tokenDeviceID, // Use token device ID
+		MessageType: gapReq.MessageType,
+		Data:        gapData,
+		UserInfo: map[string]interface{}{
+			"user_id":   user.ID,
+			"mobile_no": user.MobileNo,
+			"full_name": user.FullName,
+			"status":    user.Status,
+			"language":  user.LanguageCode,
+		},
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		SocketID:  "",
+		Event:     "list:contest:gap:response",
+	}, nil
+}
+
+// calculatePriceGapData calculates price gap information from contest data
+func (s *SocketService) calculatePriceGapData(allContests map[string]interface{}, gapReq models.ContestGapRequest) map[string]interface{} {
+	gapData := map[string]interface{}{
+		"price_gaps": []map[string]interface{}{},
+		"summary":    map[string]interface{}{},
+	}
+
+	log.Printf("🔍 Starting calculatePriceGapData - MessageType: %s", gapReq.MessageType)
+	log.Printf("🔍 All contests keys: %v", getMapKeys(allContests))
+
+	if gamelist, exists := allContests["gamelist"]; exists {
+		log.Printf("🔍 Found gamelist, type: %T", gamelist)
+
+		var contests []map[string]interface{}
+
+		// Handle different possible types
+		switch v := gamelist.(type) {
+		case []map[string]interface{}:
+			contests = v
+			log.Printf("🔍 Direct []map[string]interface{} type, count: %d", len(contests))
+		case []interface{}:
+			// Convert []interface{} to []map[string]interface{}
+			contests = make([]map[string]interface{}, 0, len(v))
+			for _, item := range v {
+				if contest, ok := item.(map[string]interface{}); ok {
+					contests = append(contests, contest)
+				}
+			}
+			log.Printf("🔍 Converted []interface{} to []map[string]interface{}, count: %d", len(contests))
+		default:
+			log.Printf("🔍 Unknown gamelist type: %T", gamelist)
+			return gapData
+		}
+
+		if len(contests) > 0 {
+			var winPrices []float64
+			var entryFees []float64
+
+			log.Printf("🔍 Processing %d contests", len(contests))
+
+			// Extract all prices and fees
+			for i, contest := range contests {
+				log.Printf("🔍 Contest %d keys: %v", i, getMapKeys(contest))
+
+				if winPrice, exists := contest["contest_win_price"]; exists {
+					price := s.convertToFloat(winPrice)
+					winPrices = append(winPrices, price)
+					log.Printf("🔍 Contest %d win price: %v -> %f", i, winPrice, price)
+				}
+
+				if entryFee, exists := contest["contest_entryfee"]; exists {
+					fee := s.convertToFloat(entryFee)
+					entryFees = append(entryFees, fee)
+					log.Printf("🔍 Contest %d entry fee: %v -> %f", i, entryFee, fee)
+				}
+			}
+
+			log.Printf("🔍 Extracted %d win prices, %d entry fees", len(winPrices), len(entryFees))
+
+			// Calculate gaps based on message type
+			switch gapReq.MessageType {
+			case "win_price_gap":
+				gapData["price_gaps"] = s.calculateWinPriceGaps(winPrices)
+			case "entry_fee_gap":
+				gapData["price_gaps"] = s.calculateEntryFeeGaps(entryFees)
+			case "price_gap":
+				gapData["price_gaps"] = s.calculateCombinedPriceGaps(winPrices, entryFees)
+			default:
+				gapData["price_gaps"] = s.calculateAllPriceGaps(winPrices, entryFees)
+			}
+
+			// Add summary statistics
+			gapData["summary"] = map[string]interface{}{
+				"total_contests":  len(contests),
+				"filter_type":     gapReq.MessageType,
+				"win_price_range": s.calculateRange(winPrices),
+				"entry_fee_range": s.calculateRange(entryFees),
+				"avg_win_price":   s.calculateAverage(winPrices),
+				"avg_entry_fee":   s.calculateAverage(entryFees),
+			}
+		} else {
+			log.Printf("🔍 No contests found in gamelist")
+		}
+	} else {
+		log.Printf("🔍 No gamelist found in allContests")
+	}
+
+	log.Printf("🔍 Final gap data: %+v", gapData)
+	return gapData
+}
+
+// calculateWinPriceGaps calculates win price gap ranges
+func (s *SocketService) calculateWinPriceGaps(prices []float64) []map[string]interface{} {
+	if len(prices) == 0 {
+		return []map[string]interface{}{}
+	}
+
+	// Sort prices
+	sort.Float64s(prices)
+
+	var gaps []map[string]interface{}
+
+	// Create price ranges
+	ranges := []struct {
+		min  float64
+		max  float64
+		name string
+	}{
+		{0, 1000, "Low"},
+		{1000, 3000, "Medium"},
+		{3000, 5000, "High"},
+		{5000, 10000, "Premium"},
+		{10000, 999999, "Elite"},
+	}
+
+	for _, r := range ranges {
+		count := 0
+		for _, price := range prices {
+			if price >= r.min && price < r.max {
+				count++
+			}
+		}
+
+		if count > 0 {
+			gaps = append(gaps, map[string]interface{}{
+				"type":          "win_price",
+				"range_name":    r.name,
+				"min_price":     r.min,
+				"max_price":     r.max,
+				"contest_count": count,
+				"percentage":    float64(count) / float64(len(prices)) * 100,
+			})
+		}
+	}
+
+	return gaps
+}
+
+// calculateEntryFeeGaps calculates entry fee gap ranges
+func (s *SocketService) calculateEntryFeeGaps(fees []float64) []map[string]interface{} {
+	if len(fees) == 0 {
+		return []map[string]interface{}{}
+	}
+
+	// Sort fees
+	sort.Float64s(fees)
+
+	var gaps []map[string]interface{}
+
+	// Create fee ranges
+	ranges := []struct {
+		min  float64
+		max  float64
+		name string
+	}{
+		{0, 10, "Free"},
+		{10, 50, "Low"},
+		{50, 100, "Medium"},
+		{100, 200, "High"},
+		{200, 999999, "Premium"},
+	}
+
+	for _, r := range ranges {
+		count := 0
+		for _, fee := range fees {
+			if fee >= r.min && fee < r.max {
+				count++
+			}
+		}
+
+		if count > 0 {
+			gaps = append(gaps, map[string]interface{}{
+				"type":          "entry_fee",
+				"range_name":    r.name,
+				"min_price":     r.min,
+				"max_price":     r.max,
+				"contest_count": count,
+				"percentage":    float64(count) / float64(len(fees)) * 100,
+			})
+		}
+	}
+
+	return gaps
+}
+
+// calculateCombinedPriceGaps calculates both win price and entry fee gaps
+func (s *SocketService) calculateCombinedPriceGaps(prices, fees []float64) []map[string]interface{} {
+	winGaps := s.calculateWinPriceGaps(prices)
+	entryGaps := s.calculateEntryFeeGaps(fees)
+
+	var combined []map[string]interface{}
+	combined = append(combined, winGaps...)
+	combined = append(combined, entryGaps...)
+
+	return combined
+}
+
+// calculateAllPriceGaps calculates all possible price gaps
+func (s *SocketService) calculateAllPriceGaps(prices, fees []float64) []map[string]interface{} {
+	return s.calculateCombinedPriceGaps(prices, fees)
+}
+
+// calculateRange calculates min, max, and range for a slice of values
+func (s *SocketService) calculateRange(values []float64) map[string]interface{} {
+	if len(values) == 0 {
+		return map[string]interface{}{
+			"min":   0,
+			"max":   0,
+			"range": 0,
+		}
+	}
+
+	sort.Float64s(values)
+	min := values[0]
+	max := values[len(values)-1]
+
+	return map[string]interface{}{
+		"min":   min,
+		"max":   max,
+		"range": max - min,
+	}
+}
+
+// calculateAverage calculates the average of a slice of values
+func (s *SocketService) calculateAverage(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	sum := 0.0
+	for _, v := range values {
+		sum += v
+	}
+
+	return sum / float64(len(values))
+}
+
+// convertToFloat converts interface{} to float64 for price comparisons
+func (s *SocketService) convertToFloat(value interface{}) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case string:
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return 0
 }
