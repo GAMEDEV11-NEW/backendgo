@@ -1,77 +1,168 @@
-# GOSOCKET - Real-time Gaming Platform
+# 🚀 GOSOCKET - Go Fiber Socket.IO Backend
 
-A high-performance real-time gaming platform built with Go, Socket.IO, and Apache Cassandra for scalable multiplayer gaming experiences.
+A high-performance, real-time gaming backend built with Go Fiber, Socket.IO, Cassandra, and Redis. This application provides a complete authentication system, real-time communication, and gaming infrastructure.
 
-## 🚀 Features
+## 📋 Table of Contents
 
-- **Real-time Communication**: Socket.IO for bidirectional communication
-- **User Authentication**: Mobile-based login with OTP verification
-- **Session Management**: JWT-based session handling with device tracking
-- **Gaming Platform**: Contest management, game listings, and real-time gameplay
-- **Scalable Database**: Apache Cassandra for high-performance data storage
-- **Caching Layer**: Redis for performance optimization
-- **Push Notifications**: FCM integration for real-time notifications
+- [Architecture Overview](#architecture-overview)
+- [Technology Stack](#technology-stack)
+- [Project Structure](#project-structure)
+- [Installation & Setup](#installation--setup)
+- [Configuration](#configuration)
+- [API Documentation](#api-documentation)
+- [Socket.IO Events](#socketio-events)
+- [Database Schema](#database-schema)
+- [Authentication Flow](#authentication-flow)
+- [Real-time Features](#real-time-features)
+- [Background Services](#background-services)
+- [Development](#development)
+- [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
 
-## 🏗️ Architecture
+## 🏗️ Architecture Overview
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Client Apps   │    │   Web Clients   │    │   Admin Panel   │
+│   Client Apps   │    │   Web Clients   │    │   Mobile Apps   │
 └─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
           │                      │                      │
           └──────────────────────┼──────────────────────┘
                                  │
                     ┌─────────────▼─────────────┐
-                    │    GOSOCKET Server        │
-                    │  (Go + Fiber + Socket.IO) │
+                    │    Go Fiber Server        │
+                    │  (Port: 8088)             │
                     └─────────────┬─────────────┘
                                   │
           ┌───────────────────────┼───────────────────────┐
           │                       │                       │
 ┌─────────▼─────────┐  ┌─────────▼─────────┐  ┌─────────▼─────────┐
-│   Apache Cassandra │  │      Redis        │  │   FCM Service     │
-│   (Primary DB)     │  │   (Caching)       │  │ (Notifications)   │
-└────────────────────┘  └────────────────────┘  └────────────────────┘
+│   Socket.IO       │  │   HTTP Routes     │  │   Background      │
+│   Real-time       │  │   REST API        │  │   Services        │
+└─────────┬─────────┘  └─────────┬─────────┘  └─────────┬─────────┘
+          │                      │                      │
+          └──────────────────────┼──────────────────────┘
+                                 │
+                    ┌─────────────▼─────────────┐
+                    │    Service Layer          │
+                    │  - Auth Service           │
+                    │  - Socket Service         │
+                    │  - Game Service           │
+                    └─────────────┬─────────────┘
+                                  │
+          ┌───────────────────────┼───────────────────────┐
+          │                       │                       │
+┌─────────▼─────────┐  ┌─────────▼─────────┐  ┌─────────▼─────────┐
+│   Cassandra DB    │  │   Redis Cache     │  │   MongoDB         │
+│   (Primary DB)    │  │   (Session/OTP)   │  │   (User Data)     │
+└───────────────────┘  └───────────────────┘  └───────────────────┘
 ```
 
-## 📋 Prerequisites
+## 🛠️ Technology Stack
 
-- **Go 1.22+** - [Download](https://golang.org/dl/)
-- **Apache Cassandra 4.x** - [Download](https://cassandra.apache.org/download/)
-- **Redis 6.x+** - [Download](https://redis.io/download)
-- **Python 3.8+** (for database setup)
-- **Git**
+### Core Framework
+- **Go Fiber v2.52.5** - High-performance HTTP framework
+- **Socket.IO v4.0.8** - Real-time bidirectional communication
+- **Go 1.22.2** - Programming language
 
-## 🛠️ Installation & Setup
+### Database & Cache
+- **Apache Cassandra** - Primary database for scalability
+- **Redis** - Caching and session management
+- **MongoDB** - User data storage
 
-### 1. Clone the Repository
+### Authentication & Security
+- **JWT (JSON Web Tokens)** - Stateless authentication
+- **OTP (One-Time Password)** - Two-factor authentication
+- **Session Management** - Secure session handling
 
-```bash
-git clone <repository-url>
-cd GOSOCKEKT
+### Additional Libraries
+- **gocql** - Cassandra driver
+- **go-redis** - Redis client
+- **mongo-driver** - MongoDB driver
+- **godotenv** - Environment configuration
+
+## 📁 Project Structure
+
+```
+backendgo/
+├── main.go                 # Application entry point
+├── go.mod                  # Go module dependencies
+├── go.sum                  # Dependency checksums
+├── .env.example           # Environment configuration template
+├── README.md              # This documentation
+│
+├── app/                   # Application logic
+│   ├── controllers/       # HTTP request handlers
+│   │   └── auth_controller.go
+│   ├── middlewares/       # HTTP middleware
+│   ├── models/           # Data models
+│   │   ├── socket_models.go
+│   │   └── loginmodel.go
+│   ├── routes/           # HTTP route definitions
+│   │   └── routes.go
+│   ├── services/         # Business logic
+│   │   └── socket_service.go
+│   └── utils/            # Utility functions
+│
+├── config/               # Configuration management
+│   ├── config.go         # Environment configuration
+│   └── socket_handler.go # Socket.IO event handlers
+│
+├── database/             # Database connections
+│   └── database.go       # Cassandra connection setup
+│
+├── redis/               # Redis cache
+│   └── redis_service.go # Redis service implementation
+│
+└── setup_scripts/       # Database setup scripts
+    ├── setup_cassandra.py
+    └── DATABASESETUP.py
 ```
 
-### 2. Install Go Dependencies
+## 🚀 Installation & Setup
 
-```bash
-go mod download
-```
+### Prerequisites
 
-### 3. Install Python Dependencies (for database setup)
+1. **Go 1.22.2+** installed
+2. **Apache Cassandra** running
+3. **Redis** server running
+4. **MongoDB** (optional, for user data)
 
-```bash
-pip install cassandra-driver
-```
+### Quick Start
 
-### 4. Configure Environment
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd backendgo
+   ```
 
-Copy the environment template and configure your settings:
+2. **Install dependencies**
+   ```bash
+   go mod tidy
+   ```
 
-```bash
-cp env.example .env
-```
+3. **Configure environment**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
 
-Edit `.env` file with your configuration:
+4. **Setup database**
+   ```bash
+   python3 setup_cassandra.py
+   ```
+
+5. **Run the application**
+   ```bash
+   go run main.go
+   ```
+
+The server will start on port 8088 with comprehensive logging.
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+Create a `.env` file based on `.env.example`:
 
 ```env
 # Cassandra Configuration
@@ -89,283 +180,469 @@ REDIS_DB=0
 # Server Configuration
 SERVER_PORT=8088
 
-# Application Configuration
-APP_ENV=development
-APP_DEBUG=true
-
 # JWT Configuration
 JWT_SECRET=your-super-secret-jwt-key-here
 JWT_EXPIRY=24h
+
+# Application Configuration
+APP_ENV=development
+APP_DEBUG=true
 ```
 
-### 5. Start Cassandra
-
-#### Using Docker (Recommended)
-
-```bash
-docker run -d --name cassandra \
-  -p 9042:9042 \
-  -e CASSANDRA_USER=cassandra \
-  -e CASSANDRA_PASSWORD=cassandra \
-  cassandra:4.1
-```
-
-#### Using Local Installation
-
-1. Download and install Cassandra
-2. Start the service:
-   ```bash
-   sudo systemctl start cassandra
-   # or
-   cassandra
-   ```
-
-### 6. Start Redis
-
-#### Using Docker
-
-```bash
-docker run -d --name redis \
-  -p 6379:6379 \
-  redis:7-alpine
-```
-
-#### Using Local Installation
-
-```bash
-redis-server
-```
-
-### 7. Setup Database
-
-Run the database setup script:
-
-```bash
-python setup_cassandra.py
-```
-
-This will:
-- Create the keyspace
-- Create all required tables
-- Set up secondary indexes
-- Insert sample data
-- Verify the setup
-
-### 8. Run the Application
-
-```bash
-go run main.go
-```
-
-The server will start on port 8088 (or your configured port).
-
-## 📊 Database Schema
-
-### Tables
-
-1. **users** - User profiles and preferences
-2. **sessions** - Active user sessions with composite primary key
-3. **games** - Game catalog and metadata
-4. **contests** - Contest information and pricing
-5. **server_announcements** - System announcements
-6. **game_updates** - Game version updates
-7. **sessions_by_token** - Quick session lookups by token
-
-### Key Design Patterns
-
-- **Composite Primary Keys** for efficient querying
-- **Secondary Indexes** for flexible queries
-- **TTL Support** for session expiration
-- **Clustering Keys** for ordered data access
-
-## 🔌 API Endpoints
-
-### Socket.IO Events
-
-| Event | Description | Payload |
-|-------|-------------|---------|
-| `device:info` | Register device | `DeviceInfo` |
-| `login` | User authentication | `LoginRequest` |
-| `verify:otp` | OTP verification | `OTPVerificationRequest` |
-| `set:profile` | Profile setup | `SetProfileRequest` |
-| `set:language` | Language preferences | `SetLanguageRequest` |
-| `main:screen` | Main dashboard | `MainScreenRequest` |
-| `contest:list` | Contest listings | `ContestRequest` |
-| `contest:join` | Join contest | `ContestJoinRequest` |
-| `contest:gap` | Price analysis | `ContestGapRequest` |
+## 📚 API Documentation
 
 ### HTTP Endpoints
 
-Currently minimal - focus is on Socket.IO for real-time features.
-
-## 🎮 Usage Examples
-
-### Connect to Socket.IO
-
-```javascript
-const socket = io('http://localhost:8088');
-
-// Connect to gameplay namespace
-const gameplaySocket = io('http://localhost:8088/gameplay');
-
-// Send device info
-socket.emit('device:info', {
-  device_id: 'device_123',
-  device_type: 'mobile',
-  manufacturer: 'Samsung',
-  model: 'Galaxy S21'
-});
-
-// Login
-socket.emit('login', {
-  mobile_no: '+1234567890',
-  device_id: 'device_123',
-  fcm_token: 'your-fcm-token-here'
-});
+#### Health Check
+```http
+GET /health
 ```
+Returns server health status and database connectivity.
 
-### Go Client Example
-
-```go
-package main
-
-import (
-    "github.com/gorilla/websocket"
-    "log"
-)
-
-func main() {
-    // Connect to Socket.IO server
-    conn, _, err := websocket.Dial("ws://localhost:8088/socket.io/", nil)
-    if err != nil {
-        log.Fatal("dial:", err)
-    }
-    defer conn.Close()
-
-    // Send login request
-    loginReq := `{
-        "event": "login",
-        "data": {
-            "mobile_no": "+1234567890",
-            "device_id": "device_123",
-            "fcm_token": "your-fcm-token"
-        }
-    }`
-    
-    err = conn.WriteMessage(websocket.TextMessage, []byte(loginReq))
-    if err != nil {
-        log.Fatal("write:", err)
-    }
+**Response:**
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "services": {
+    "cassandra": "ok",
+    "redis": "ok"
+  }
 }
 ```
 
-## 🔧 Configuration
+#### API Version
+```http
+GET /api/version
+```
+Returns application version information.
 
-### Environment Variables
+**Response:**
+```json
+{
+  "version": "1.0.0",
+  "name": "GOSOCKET",
+  "timestamp": "2024-01-15T10:30:00Z"
+}
+```
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CASSANDRA_HOST` | `localhost` | Cassandra server host |
-| `CASSANDRA_PORT` | `9042` | Cassandra server port |
-| `CASSANDRA_USERNAME` | `cassandra` | Cassandra username |
-| `CASSANDRA_PASSWORD` | `cassandra` | Cassandra password |
-| `CASSANDRA_KEYSPACE` | `myapp` | Cassandra keyspace |
-| `REDIS_URL` | `localhost:6379` | Redis server URL |
-| `REDIS_PASSWORD` | `` | Redis password |
-| `REDIS_DB` | `0` | Redis database number |
-| `SERVER_PORT` | `8088` | Server port |
-| `JWT_SECRET` | - | JWT secret key |
-| `JWT_EXPIRY` | `24h` | JWT expiration time |
+### Authentication Endpoints
 
-### Cassandra Configuration
+#### Login
+```http
+POST /auth/login
+Content-Type: application/json
 
-The application is optimized for Cassandra with:
+{
+  "mobile_no": "+1234567890",
+  "device_id": "device123",
+  "fcm_token": "fcm_token_here"
+}
+```
 
-- **Connection Pooling**: 10 connections per node
-- **Retry Policy**: Simple retry with 3 attempts
-- **Consistency Level**: QUORUM for writes
-- **Timeout Settings**: 10s connection, 10s query timeout
+#### Verify OTP
+```http
+POST /auth/verify-otp
+Content-Type: application/json
+
+{
+  "mobile_no": "+1234567890",
+  "session_token": "session_token_here",
+  "otp": "123456"
+}
+```
+
+#### Set Profile
+```http
+POST /auth/set-profile
+Content-Type: application/json
+
+{
+  "mobile_no": "+1234567890",
+  "session_token": "session_token_here",
+  "full_name": "John Doe",
+  "state": "California"
+}
+```
+
+## 🔌 Socket.IO Events
+
+### Connection Events
+
+#### Connect
+```javascript
+// Client connects to Socket.IO
+socket.connect();
+```
+
+**Server Response:**
+```json
+{
+  "token": 12345,
+  "message": "Connected successfully",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "socket_id": "socket_123",
+  "status": "connected",
+  "event": "connect"
+}
+```
+
+#### Device Info
+```javascript
+// Send device information
+socket.emit('device_info', {
+  "device_id": "device123",
+  "device_type": "mobile",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "manufacturer": "Apple",
+  "model": "iPhone 14"
+});
+```
+
+### Authentication Events
+
+#### Login
+```javascript
+socket.emit('login', {
+  "mobile_no": "+1234567890",
+  "device_id": "device123",
+  "fcm_token": "fcm_token_here"
+});
+```
+
+**Server Response:**
+```json
+{
+  "status": "success",
+  "message": "OTP sent successfully",
+  "mobile_no": "+1234567890",
+  "device_id": "device123",
+  "session_token": "session_token_here",
+  "otp": 123456,
+  "is_new_user": true,
+  "timestamp": "2024-01-15T10:30:00Z",
+  "socket_id": "socket_123",
+  "event": "login"
+}
+```
+
+#### Verify OTP
+```javascript
+socket.emit('verify_otp', {
+  "mobile_no": "+1234567890",
+  "session_token": "session_token_here",
+  "otp": "123456"
+});
+```
+
+#### Set Profile
+```javascript
+socket.emit('set_profile', {
+  "mobile_no": "+1234567890",
+  "session_token": "session_token_here",
+  "full_name": "John Doe",
+  "state": "California"
+});
+```
+
+### Gameplay Events
+
+#### Gameplay Namespace
+Connect to the gameplay namespace for real-time gaming:
+```javascript
+const gameplaySocket = io('/gameplay');
+```
+
+#### Player Action
+```javascript
+gameplaySocket.emit('player_action', {
+  "action_type": "move",
+  "player_id": "player123",
+  "session_token": "session_token_here",
+  "coordinates": {
+    "x": 100,
+    "y": 200
+  },
+  "timestamp": "2024-01-15T10:30:00Z",
+  "game_state": {
+    "level": 1,
+    "score": 1000,
+    "health": 100
+  }
+});
+```
+
+### Utility Events
+
+#### Heartbeat
+```javascript
+socket.emit('heartbeat');
+```
+
+#### Disconnect
+```javascript
+socket.disconnect();
+```
+
+## 🗄️ Database Schema
+
+### Cassandra Tables
+
+#### Users Table
+```sql
+CREATE TABLE users (
+    mobile_no text PRIMARY KEY,
+    email text,
+    full_name text,
+    state text,
+    referral_code text,
+    referred_by text,
+    language_code text,
+    language_name text,
+    status text,
+    created_at timestamp,
+    updated_at timestamp
+);
+```
+
+#### Sessions Table
+```sql
+CREATE TABLE sessions (
+    session_token text PRIMARY KEY,
+    user_id text,
+    mobile_no text,
+    device_id text,
+    fcm_token text,
+    jwt_token text,
+    created_at timestamp,
+    expires_at timestamp,
+    is_active boolean
+);
+```
+
+#### OTP Table
+```sql
+CREATE TABLE otps (
+    phone_or_email text,
+    otp_code text,
+    created_at timestamp,
+    expires_at timestamp,
+    purpose text,
+    is_verified boolean,
+    attempt_count int,
+    PRIMARY KEY (phone_or_email, created_at)
+);
+```
+
+### Redis Keys
+
+- `session:{session_token}` - Session data
+- `otp:{mobile_no}` - OTP data
+- `user:{mobile_no}` - User cache
+- `socket:{socket_id}` - Socket connection data
+
+## 🔐 Authentication Flow
+
+### 1. User Registration/Login
+```
+Client → Socket.IO Login Event → Server
+Server → Generate OTP → Store in Cassandra
+Server → Send OTP Response → Client
+```
+
+### 2. OTP Verification
+```
+Client → Socket.IO Verify OTP Event → Server
+Server → Validate OTP → Generate JWT
+Server → Create Session → Store in Cassandra
+Server → Send JWT Response → Client
+```
+
+### 3. Profile Setup
+```
+Client → Socket.IO Set Profile Event → Server
+Server → Update User Profile → Store in Cassandra
+Server → Send Profile Response → Client
+```
+
+### 4. Session Management
+```
+Client → Include JWT in Requests → Server
+Server → Validate JWT → Check Session
+Server → Process Request → Send Response
+```
+
+## ⚡ Real-time Features
+
+### Socket.IO Namespaces
+
+1. **Default Namespace (`/`)**
+   - Authentication events
+   - Device management
+   - General communication
+
+2. **Gameplay Namespace (`/gameplay`)**
+   - Real-time gaming events
+   - Player actions
+   - Game state synchronization
+
+### Real-time Capabilities
+
+- **Bidirectional Communication** - Instant message exchange
+- **Room Management** - Group users in game rooms
+- **Event Broadcasting** - Send events to multiple clients
+- **Connection Management** - Handle disconnections gracefully
+- **Heartbeat Monitoring** - Keep connections alive
+
+## 🧹 Background Services
+
+### Cleanup Service
+The application runs a background service every 5 minutes to:
+
+1. **Cleanup Expired Sessions**
+   - Remove sessions past expiration time
+   - Free up database space
+
+2. **Cleanup Expired OTPs**
+   - Remove OTPs past expiration time
+   - Maintain security
+
+### Service Configuration
+```go
+// Runs every 5 minutes
+ticker := time.NewTicker(5 * time.Minute)
+
+// Cleanup operations
+socketService.CleanupExpiredSessions()
+socketService.CleanupExpiredOTPs()
+```
+
+## 🛠️ Development
+
+### Running in Development
+
+1. **Start with debug logging**
+   ```bash
+   go run main.go
+   ```
+
+2. **Monitor logs**
+   - All operations are logged with emojis
+   - Debug information for troubleshooting
+   - Error tracking and reporting
+
+### Code Structure Best Practices
+
+- **Separation of Concerns** - Clear module boundaries
+- **Error Handling** - Comprehensive error management
+- **Logging** - Detailed operation logging
+- **Configuration** - Environment-based configuration
+- **Testing** - Unit and integration tests
+
+### Adding New Features
+
+1. **Models** - Define data structures in `app/models/`
+2. **Services** - Implement business logic in `app/services/`
+3. **Controllers** - Handle HTTP requests in `app/controllers/`
+4. **Routes** - Define endpoints in `app/routes/`
+5. **Socket Events** - Add real-time events in `config/socket_handler.go`
 
 ## 🚀 Deployment
 
+### Production Setup
+
+1. **Environment Configuration**
+   ```bash
+   # Set production environment
+   APP_ENV=production
+   APP_DEBUG=false
+   ```
+
+2. **Database Setup**
+   ```bash
+   # Ensure Cassandra is running
+   # Setup production keyspace
+   # Configure Redis cluster
+   ```
+
+3. **Build Application**
+   ```bash
+   go build -o gosocket main.go
+   ```
+
+4. **Run with Process Manager**
+   ```bash
+   # Using systemd or PM2
+   ./gosocket
+   ```
+
 ### Docker Deployment
 
-```bash
-# Build the application
-docker build -t gosocket .
+```dockerfile
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN go mod download
+RUN go build -o gosocket main.go
 
-# Run with environment variables
-docker run -d \
-  --name gosocket \
-  -p 8088:8088 \
-  -e CASSANDRA_HOST=cassandra \
-  -e REDIS_URL=redis:6379 \
-  gosocket
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /app/gosocket .
+CMD ["./gosocket"]
 ```
 
-### Production Considerations
+## 🔧 Troubleshooting
 
-1. **Cassandra Cluster**: Use multiple nodes for high availability
-2. **Redis Cluster**: Use Redis Cluster for scalability
-3. **Load Balancer**: Use nginx or HAProxy for load balancing
-4. **Monitoring**: Implement health checks and metrics
-5. **Security**: Use proper authentication and SSL/TLS
+### Common Issues
 
-## 🧪 Testing
+1. **Database Connection Failed**
+   - Check Cassandra service status
+   - Verify connection credentials
+   - Ensure keyspace exists
+
+2. **Redis Connection Failed**
+   - Check Redis service status
+   - Verify Redis URL and credentials
+   - Check network connectivity
+
+3. **Socket.IO Connection Issues**
+   - Verify client Socket.IO version
+   - Check CORS configuration
+   - Monitor server logs
+
+### Debug Mode
+
+Enable debug logging by setting:
+```env
+APP_DEBUG=true
+LOG_LEVEL=debug
+```
 
 ### Health Check
 
+Use the health endpoint to verify service status:
 ```bash
 curl http://localhost:8088/health
 ```
 
-### Socket.IO Connection Test
+### Log Analysis
 
-```bash
-# Using wscat
-npm install -g wscat
-wscat -c ws://localhost:8088/socket.io/
-```
+Look for these log patterns:
+- `✅` - Successful operations
+- `❌` - Errors and failures
+- `⚠️` - Warnings
+- `🔌` - Connection events
+- `🧹` - Cleanup operations
 
-## 📝 Logging
+## 📞 Support
 
-The application uses structured logging with different levels:
-
-- **INFO**: General application flow
-- **WARNING**: Non-critical issues
-- **ERROR**: Critical errors
-- **DEBUG**: Detailed debugging information
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🆘 Support
-
-For support and questions:
-
-- Create an issue in the repository
-- Check the documentation
-- Review the code examples
-
-## 🔄 Changelog
-
-### v1.0.0
-- Initial release
-- Socket.IO integration
-- Cassandra database support
-- User authentication system
-- Contest management
-- Real-time gaming features
+For issues and questions:
+1. Check the logs for detailed error messages
+2. Verify configuration settings
+3. Test database connectivity
+4. Review Socket.IO client implementation
 
 ---
 
-**Happy Gaming! 🎮** 
+**GOSOCKET v1.0.0** - Built with ❤️ using Go Fiber and Socket.IO 

@@ -4,7 +4,6 @@ import (
 	"gofiber/app/middlewares"
 	"gofiber/app/models"
 	"gofiber/app/services"
-	"log"
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
@@ -34,7 +33,6 @@ func (ac *AuthController) Login(c *fiber.Ctx) error {
 	var loginReq models.LoginRequest
 
 	if err := c.BodyParser(&loginReq); err != nil {
-		log.Printf("Failed to parse login request: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Invalid request body",
@@ -67,7 +65,6 @@ func (ac *AuthController) Login(c *fiber.Ctx) error {
 	// Process login using socket service
 	response, err := ac.socketService.HandleLogin(loginReq)
 	if err != nil {
-		log.Printf("Login failed for %s: %v", loginReq.MobileNo, err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Login failed",
@@ -75,7 +72,6 @@ func (ac *AuthController) Login(c *fiber.Ctx) error {
 		})
 	}
 
-	log.Printf("Login successful for %s", loginReq.MobileNo)
 	return c.JSON(response)
 }
 
@@ -84,7 +80,6 @@ func (ac *AuthController) VerifyOTP(c *fiber.Ctx) error {
 	var otpReq models.OTPVerificationRequest
 
 	if err := c.BodyParser(&otpReq); err != nil {
-		log.Printf("Failed to parse OTP request: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Invalid request body",
@@ -117,7 +112,6 @@ func (ac *AuthController) VerifyOTP(c *fiber.Ctx) error {
 	// Process OTP verification using socket service
 	response, err := ac.socketService.HandleOTPVerification(otpReq)
 	if err != nil {
-		log.Printf("OTP verification failed for %s: %v", otpReq.MobileNo, err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "OTP verification failed",
@@ -125,7 +119,6 @@ func (ac *AuthController) VerifyOTP(c *fiber.Ctx) error {
 		})
 	}
 
-	log.Printf("OTP verification successful for %s", otpReq.MobileNo)
 	return c.JSON(response)
 }
 
@@ -134,7 +127,6 @@ func (ac *AuthController) SetProfile(c *fiber.Ctx) error {
 	var profileReq models.SetProfileRequest
 
 	if err := c.BodyParser(&profileReq); err != nil {
-		log.Printf("Failed to parse profile request: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Invalid request body",
@@ -167,7 +159,6 @@ func (ac *AuthController) SetProfile(c *fiber.Ctx) error {
 	// Process profile setup using socket service
 	response, err := ac.socketService.HandleSetProfile(profileReq)
 	if err != nil {
-		log.Printf("Profile setup failed for %s: %v", profileReq.MobileNo, err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Profile setup failed",
@@ -175,7 +166,6 @@ func (ac *AuthController) SetProfile(c *fiber.Ctx) error {
 		})
 	}
 
-	log.Printf("Profile setup successful for %s", profileReq.MobileNo)
 	return c.JSON(response)
 }
 
@@ -184,7 +174,6 @@ func (ac *AuthController) SetLanguage(c *fiber.Ctx) error {
 	var langReq models.SetLanguageRequest
 
 	if err := c.BodyParser(&langReq); err != nil {
-		log.Printf("Failed to parse language request: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Invalid request body",
@@ -217,7 +206,6 @@ func (ac *AuthController) SetLanguage(c *fiber.Ctx) error {
 	// Process language setup using socket service
 	response, err := ac.socketService.HandleSetLanguage(langReq)
 	if err != nil {
-		log.Printf("Language setup failed for %s: %v", langReq.MobileNo, err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Language setup failed",
@@ -225,7 +213,6 @@ func (ac *AuthController) SetLanguage(c *fiber.Ctx) error {
 		})
 	}
 
-	log.Printf("Language setup successful for %s", langReq.MobileNo)
 	return c.JSON(response)
 }
 
@@ -234,7 +221,6 @@ func (ac *AuthController) MainScreen(c *fiber.Ctx) error {
 	var mainReq models.MainScreenRequest
 
 	if err := c.BodyParser(&mainReq); err != nil {
-		log.Printf("Failed to parse main screen request: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Invalid request body",
@@ -274,7 +260,6 @@ func (ac *AuthController) MainScreen(c *fiber.Ctx) error {
 	// Process main screen request using socket service
 	response, err := ac.socketService.HandleMainScreen(mainReq)
 	if err != nil {
-		log.Printf("Main screen request failed for %s: %v", mainReq.MobileNo, err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Main screen request failed",
@@ -282,7 +267,6 @@ func (ac *AuthController) MainScreen(c *fiber.Ctx) error {
 		})
 	}
 
-	log.Printf("Main screen request successful for %s", mainReq.MobileNo)
 	return c.JSON(response)
 }
 
@@ -291,7 +275,6 @@ func (ac *AuthController) StaticMessage(c *fiber.Ctx) error {
 	var staticReq models.StaticMessageRequest
 
 	if err := c.BodyParser(&staticReq); err != nil {
-		log.Printf("Failed to parse static message request: %v", err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Invalid request body",
@@ -324,7 +307,6 @@ func (ac *AuthController) StaticMessage(c *fiber.Ctx) error {
 	// Process static message request using socket service
 	response, err := ac.socketService.HandleStaticMessage(staticReq)
 	if err != nil {
-		log.Printf("Static message request failed for %s: %v", staticReq.MobileNo, err)
 		return c.Status(400).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Static message request failed",
@@ -332,7 +314,6 @@ func (ac *AuthController) StaticMessage(c *fiber.Ctx) error {
 		})
 	}
 
-	log.Printf("Static message request successful for %s", staticReq.MobileNo)
 	return c.JSON(response)
 }
 
@@ -364,14 +345,12 @@ func (ac *AuthController) Logout(c *fiber.Ctx) error {
 	)
 
 	if err != nil {
-		log.Printf("Failed to deactivate session for %s: %v", user.MobileNo, err)
 		return c.Status(500).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Failed to logout",
 		})
 	}
 
-	log.Printf("Logout successful for %s", user.MobileNo)
 	return c.JSON(fiber.Map{
 		"status":    "success",
 		"message":   "Logout successful",
@@ -425,14 +404,12 @@ func (ac *AuthController) UpdateProfile(c *fiber.Ctx) error {
 	)
 
 	if err != nil {
-		log.Printf("Failed to update profile for %s: %v", user.MobileNo, err)
 		return c.Status(500).JSON(fiber.Map{
 			"status":  "error",
 			"message": "Failed to update profile",
 		})
 	}
 
-	log.Printf("Profile update successful for %s", user.MobileNo)
 	return c.JSON(fiber.Map{
 		"status":    "success",
 		"message":   "Profile updated successfully",

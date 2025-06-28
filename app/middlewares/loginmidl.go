@@ -4,7 +4,6 @@ package middlewares
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -58,7 +57,6 @@ func JWTMiddleware(usersCollection, sessionsCollection *mongo.Collection) fiber.
 		if mobileNo != "" {
 			err := utils.ValidateMobileNumberInToken(tokenString, mobileNo)
 			if err != nil {
-				log.Printf("JWT validation failed for mobile %s: %v", mobileNo, err)
 				return c.Status(401).JSON(fiber.Map{
 					"status":  "error",
 					"message": "Invalid JWT token",
@@ -70,7 +68,6 @@ func JWTMiddleware(usersCollection, sessionsCollection *mongo.Collection) fiber.
 		// Validate encrypted JWT token
 		encryptedJWTData, err := utils.ValidateEncryptedJWTToken(tokenString)
 		if err != nil {
-			log.Printf("Encrypted JWT validation failed: %v", err)
 			return c.Status(401).JSON(fiber.Map{
 				"status":  "error",
 				"message": "Invalid encrypted JWT token",
@@ -89,7 +86,6 @@ func JWTMiddleware(usersCollection, sessionsCollection *mongo.Collection) fiber.
 		}).Decode(&session)
 
 		if err != nil {
-			log.Printf("Session validation failed for mobile %s: %v", encryptedJWTData.MobileNo, err)
 			return c.Status(401).JSON(fiber.Map{
 				"status":  "error",
 				"message": "Invalid or expired session",
@@ -98,7 +94,6 @@ func JWTMiddleware(usersCollection, sessionsCollection *mongo.Collection) fiber.
 
 		// Verify JWT token matches stored token
 		if session.JWTToken != tokenString {
-			log.Printf("JWT token mismatch for mobile %s", encryptedJWTData.MobileNo)
 			return c.Status(401).JSON(fiber.Map{
 				"status":  "error",
 				"message": "JWT token mismatch with stored token",
@@ -109,7 +104,6 @@ func JWTMiddleware(usersCollection, sessionsCollection *mongo.Collection) fiber.
 		var user models.User
 		err = usersCollection.FindOne(ctx, bson.M{"mobile_no": encryptedJWTData.MobileNo}).Decode(&user)
 		if err != nil {
-			log.Printf("User not found for mobile %s: %v", encryptedJWTData.MobileNo, err)
 			return c.Status(401).JSON(fiber.Map{
 				"status":  "error",
 				"message": "User not found",
@@ -120,8 +114,6 @@ func JWTMiddleware(usersCollection, sessionsCollection *mongo.Collection) fiber.
 		c.Locals("user", user)
 		c.Locals("session", session)
 		c.Locals("encrypted_jwt_data", encryptedJWTData)
-
-		log.Printf("✅ JWT middleware validation successful for user: %s", encryptedJWTData.MobileNo)
 
 		return c.Next()
 	}
@@ -150,7 +142,6 @@ func OptionalJWTMiddleware(usersCollection, sessionsCollection *mongo.Collection
 		encryptedJWTData, err := utils.ValidateEncryptedJWTToken(tokenString)
 		if err != nil {
 			// Token is invalid, continue without authentication
-			log.Printf("Optional JWT validation failed: %v", err)
 			return c.Next()
 		}
 
@@ -181,8 +172,6 @@ func OptionalJWTMiddleware(usersCollection, sessionsCollection *mongo.Collection
 		c.Locals("user", user)
 		c.Locals("session", session)
 		c.Locals("encrypted_jwt_data", encryptedJWTData)
-
-		log.Printf("✅ Optional JWT middleware validation successful for user: %s", encryptedJWTData.MobileNo)
 
 		return c.Next()
 	}
