@@ -1,7 +1,6 @@
 package services
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -15,26 +14,23 @@ import (
 	"strconv"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
+	"github.com/gocql/gocql"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // SocketService handles all socket-related business logic
+// Refactored to use Cassandra
 type SocketService struct {
-	usersCollection    *mongo.Collection
-	sessionsCollection *mongo.Collection
-	redisService       *redis.Service
+	cassandraSession *gocql.Session
+	redisService     *redis.Service
 }
 
-// NewSocketService creates a new socket service instance
-func NewSocketService(usersCollection, sessionsCollection *mongo.Collection) *SocketService {
+// NewSocketService creates a new socket service instance using Cassandra
+func NewSocketService(cassandraSession *gocql.Session) *SocketService {
 	redisService := redis.NewService()
-
 	return &SocketService{
-		usersCollection:    usersCollection,
-		sessionsCollection: sessionsCollection,
-		redisService:       redisService,
+		cassandraSession: cassandraSession,
+		redisService:     redisService,
 	}
 }
 
@@ -90,16 +86,17 @@ func (s *SocketService) HandleLogin(loginReq models.LoginRequest) (*models.Login
 	// Generate OTP
 	otp := s.GenerateOTP()
 
-	// Create context for database operations
-	ctx := context.Background()
-
 	// Check if user exists
 	var existingUser models.User
-	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": loginReq.MobileNo}).Decode(&existingUser)
+	err = s.cassandraSession.Query(`
+		SELECT mobile_no, email, status, created_at, updated_at
+		FROM users
+		WHERE mobile_no = ?
+	`).Bind(loginReq.MobileNo).Scan(&existingUser.MobileNo, &existingUser.Email, &existingUser.Status, &existingUser.CreatedAt, &existingUser.UpdatedAt)
 
 	var userID string
 	var isNewUser bool
-	if err == mongo.ErrNoDocuments {
+	if err == gocql.ErrNotFound {
 		// User doesn't exist, create new user
 		userID = primitive.NewObjectID().Hex()
 		user := models.User{
@@ -110,8 +107,10 @@ func (s *SocketService) HandleLogin(loginReq models.LoginRequest) (*models.Login
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-
-		_, err = s.usersCollection.InsertOne(ctx, user)
+		err = s.cassandraSession.Query(`
+			INSERT INTO users (id, mobile_no, email, status, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`).Bind(userID, user.MobileNo, user.Email, user.Status, user.CreatedAt, user.UpdatedAt).Exec()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create user: %v", err)
 		}
@@ -129,41 +128,27 @@ func (s *SocketService) HandleLogin(loginReq models.LoginRequest) (*models.Login
 
 	// Check if there's an existing active session for this mobile number and device
 	var existingSession models.Session
-	err = s.sessionsCollection.FindOne(ctx, bson.M{
-		"mobile_no":  loginReq.MobileNo,
-		"device_id":  loginReq.DeviceID,
-		"is_active":  true,
-		"expires_at": bson.M{"$gt": time.Now()},
-	}).Decode(&existingSession)
+	err = s.cassandraSession.Query(`
+		SELECT session_token, fcm_token, expires_at, is_active
+		FROM sessions
+		WHERE mobile_no = ? AND device_id = ? AND is_active = true AND expires_at > ?
+	`).Bind(loginReq.MobileNo, loginReq.DeviceID, time.Now()).Scan(&existingSession.SessionToken, &existingSession.FCMToken, &existingSession.ExpiresAt, &existingSession.IsActive)
 
 	if err == nil {
 		// Existing session found, update it with new session token
 		log.Printf("Updating existing session for mobile: %s, device: %s", loginReq.MobileNo, loginReq.DeviceID)
-
-		update := bson.M{
-			"$set": bson.M{
-				"session_token": sessionToken,
-				"fcm_token":     loginReq.FCMToken,
-				"updated_at":    time.Now(),
-				"expires_at":    time.Now().Add(24 * time.Hour),
-				"is_active":     true,
-			},
-		}
-
-		_, err = s.sessionsCollection.UpdateOne(
-			ctx,
-			bson.M{"_id": existingSession.ID},
-			update,
-		)
+		err = s.cassandraSession.Query(`
+			UPDATE sessions
+			SET session_token = ?, fcm_token = ?, expires_at = ?, is_active = ?
+			WHERE mobile_no = ? AND device_id = ? AND is_active = true AND expires_at > ?
+		`).Bind(sessionToken, loginReq.FCMToken, time.Now().Add(24*time.Hour), true, loginReq.MobileNo, loginReq.DeviceID, time.Now()).Exec()
 		if err != nil {
 			return nil, fmt.Errorf("failed to update existing session: %v", err)
 		}
-
 		log.Printf("Existing session updated for %s", loginReq.MobileNo)
-	} else if err == mongo.ErrNoDocuments {
+	} else if err == gocql.ErrNotFound {
 		// No existing session, create new one (without JWT token yet)
 		log.Printf("Creating new session for mobile: %s, device: %s", loginReq.MobileNo, loginReq.DeviceID)
-
 		session := models.Session{
 			ID:           primitive.NewObjectID().Hex(),
 			UserID:       userID,
@@ -176,12 +161,13 @@ func (s *SocketService) HandleLogin(loginReq models.LoginRequest) (*models.Login
 			ExpiresAt:    time.Now().Add(24 * time.Hour), // 24 hour expiry
 			IsActive:     true,
 		}
-
-		_, err = s.sessionsCollection.InsertOne(ctx, session)
+		err = s.cassandraSession.Query(`
+			INSERT INTO sessions (id, user_id, session_token, jwt_token, mobile_no, device_id, fcm_token, created_at, expires_at, is_active)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`).Bind(session.ID, session.UserID, session.SessionToken, session.JWTToken, session.MobileNo, session.DeviceID, session.FCMToken, session.CreatedAt, session.ExpiresAt, session.IsActive).Exec()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create session: %v", err)
 		}
-
 		log.Printf("New session created for %s", loginReq.MobileNo)
 	} else {
 		// Database error
@@ -208,17 +194,13 @@ func (s *SocketService) HandleLogin(loginReq models.LoginRequest) (*models.Login
 func (s *SocketService) HandleOTPVerification(otpReq models.OTPVerificationRequest) (*models.OTPVerificationResponse, error) {
 	log.Printf("OTP verification for mobile: %s", otpReq.MobileNo)
 
-	// Create context for database operations
-	ctx := context.Background()
-
 	// Validate session
 	var session models.Session
-	err := s.sessionsCollection.FindOne(ctx, bson.M{
-		"session_token": otpReq.SessionToken,
-		"mobile_no":     otpReq.MobileNo,
-		"is_active":     true,
-		"expires_at":    bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err := s.cassandraSession.Query(`
+		SELECT session_token, fcm_token, expires_at, is_active
+		FROM sessions
+		WHERE session_token = ? AND mobile_no = ? AND is_active = true AND expires_at > ?
+	`).Bind(otpReq.SessionToken, otpReq.MobileNo, time.Now()).Scan(&session.SessionToken, &session.FCMToken, &session.ExpiresAt, &session.IsActive)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")
@@ -233,7 +215,11 @@ func (s *SocketService) HandleOTPVerification(otpReq models.OTPVerificationReque
 
 	// Check user status
 	var user models.User
-	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": otpReq.MobileNo}).Decode(&user)
+	err = s.cassandraSession.Query(`
+		SELECT status
+		FROM users
+		WHERE mobile_no = ?
+	`).Bind(otpReq.MobileNo).Scan(&user.Status)
 	if err != nil {
 		return nil, fmt.Errorf("user not found")
 	}
@@ -242,15 +228,14 @@ func (s *SocketService) HandleOTPVerification(otpReq models.OTPVerificationReque
 	userStatus := user.Status
 	if user.Status == "new_user" {
 		// Update user status to existing_user
-		_, err = s.usersCollection.UpdateOne(
-			ctx,
-			bson.M{"mobile_no": otpReq.MobileNo},
-			bson.M{"$set": bson.M{"status": "existing_user", "updated_at": time.Now()}},
-		)
+		err = s.cassandraSession.Query(`
+			UPDATE users
+			SET status = ?
+			WHERE mobile_no = ?
+		`).Bind("existing_user", otpReq.MobileNo).Exec()
 		if err != nil {
 			return nil, fmt.Errorf("failed to update user status: %v", err)
 		}
-
 	} else {
 		userStatus = "existing_user"
 	}
@@ -262,14 +247,11 @@ func (s *SocketService) HandleOTPVerification(otpReq models.OTPVerificationReque
 	}
 
 	// Update session with JWT token
-	_, err = s.sessionsCollection.UpdateOne(
-		ctx,
-		bson.M{"session_token": otpReq.SessionToken},
-		bson.M{"$set": bson.M{
-			"jwt_token":  jwtToken,
-			"updated_at": time.Now(),
-		}},
-	)
+	err = s.cassandraSession.Query(`
+		UPDATE sessions
+		SET jwt_token = ?
+		WHERE session_token = ?
+	`).Bind(jwtToken, otpReq.SessionToken).Exec()
 	if err != nil {
 		return nil, fmt.Errorf("failed to update session with JWT token: %v", err)
 	}
@@ -294,45 +276,27 @@ func (s *SocketService) HandleOTPVerification(otpReq models.OTPVerificationReque
 func (s *SocketService) HandleSetProfile(profileReq models.SetProfileRequest) (*models.SetProfileResponse, error) {
 	log.Printf("Setting profile for mobile: %s", profileReq.MobileNo)
 
-	// Create context for database operations
-	ctx := context.Background()
-
 	// Validate session
 	var session models.Session
-	err := s.sessionsCollection.FindOne(ctx, bson.M{
-		"session_token": profileReq.SessionToken,
-		"mobile_no":     profileReq.MobileNo,
-		"is_active":     true,
-		"expires_at":    bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err := s.cassandraSession.Query(`
+		SELECT session_token, mobile_no, is_active, expires_at
+		FROM sessions
+		WHERE session_token = ? AND mobile_no = ? AND is_active = true AND expires_at > ?
+	`).Bind(profileReq.SessionToken, profileReq.MobileNo, true, time.Now()).Scan(&session.SessionToken, &session.MobileNo, &session.IsActive, &session.ExpiresAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")
 	}
 
 	// Update user profile
-	update := bson.M{
-		"$set": bson.M{
-			"full_name":    profileReq.FullName,
-			"state":        profileReq.State,
-			"referred_by":  profileReq.ReferredBy,
-			"profile_data": profileReq.ProfileData,
-			"updated_at":   time.Now(),
-		},
-	}
-
-	result, err := s.usersCollection.UpdateOne(
-		ctx,
-		bson.M{"mobile_no": profileReq.MobileNo},
-		update,
-	)
+	err = s.cassandraSession.Query(`
+		UPDATE users
+		SET full_name = ?, state = ?, referred_by = ?, profile_data = ?
+		WHERE mobile_no = ?
+	`).Bind(profileReq.FullName, profileReq.State, profileReq.ReferredBy, profileReq.ProfileData, profileReq.MobileNo).Exec()
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to update profile: %v", err)
-	}
-
-	if result.MatchedCount == 0 {
-		return nil, fmt.Errorf("user not found")
 	}
 
 	log.Printf("Profile set successfully for %s", profileReq.MobileNo)
@@ -359,46 +323,27 @@ func (s *SocketService) HandleSetProfile(profileReq models.SetProfileRequest) (*
 func (s *SocketService) HandleSetLanguage(langReq models.SetLanguageRequest) (*models.SetLanguageResponse, error) {
 	log.Printf("Setting language for mobile: %s", langReq.MobileNo)
 
-	// Create context for database operations
-	ctx := context.Background()
-
 	// Validate session
 	var session models.Session
-	err := s.sessionsCollection.FindOne(ctx, bson.M{
-		"session_token": langReq.SessionToken,
-		"mobile_no":     langReq.MobileNo,
-		"is_active":     true,
-		"expires_at":    bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err := s.cassandraSession.Query(`
+		SELECT session_token, mobile_no, is_active, expires_at
+		FROM sessions
+		WHERE session_token = ? AND mobile_no = ? AND is_active = true AND expires_at > ?
+	`).Bind(langReq.SessionToken, langReq.MobileNo, true, time.Now()).Scan(&session.SessionToken, &session.MobileNo, &session.IsActive, &session.ExpiresAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")
 	}
 
 	// Update user language preferences
-	update := bson.M{
-		"$set": bson.M{
-			"language_code":    langReq.LanguageCode,
-			"language_name":    langReq.LanguageName,
-			"region_code":      langReq.RegionCode,
-			"timezone":         langReq.Timezone,
-			"user_preferences": langReq.UserPreferences,
-			"updated_at":       time.Now(),
-		},
-	}
-
-	result, err := s.usersCollection.UpdateOne(
-		ctx,
-		bson.M{"mobile_no": langReq.MobileNo},
-		update,
-	)
+	err = s.cassandraSession.Query(`
+		UPDATE users
+		SET language_code = ?, language_name = ?, region_code = ?, timezone = ?, user_preferences = ?
+		WHERE mobile_no = ?
+	`).Bind(langReq.LanguageCode, langReq.LanguageName, langReq.RegionCode, langReq.Timezone, langReq.UserPreferences, langReq.MobileNo).Exec()
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to update language preferences: %v", err)
-	}
-
-	if result.MatchedCount == 0 {
-		return nil, fmt.Errorf("user not found")
 	}
 
 	log.Printf("Language set successfully for %s", langReq.MobileNo)
@@ -429,17 +374,13 @@ func (s *SocketService) HandleSetLanguage(langReq models.SetLanguageRequest) (*m
 func (s *SocketService) HandlePlayerAction(actionReq models.PlayerActionRequest) (*models.PlayerActionResponse, error) {
 	log.Printf("Player action received: %s from %s", actionReq.ActionType, actionReq.PlayerID)
 
-	// Create context for database operations
-	ctx := context.Background()
-
 	// Validate session
 	var session models.Session
-	err := s.sessionsCollection.FindOne(ctx, bson.M{
-		"session_token": actionReq.SessionToken,
-		"mobile_no":     actionReq.PlayerID,
-		"is_active":     true,
-		"expires_at":    bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err := s.cassandraSession.Query(`
+		SELECT session_token, mobile_no, is_active, expires_at
+		FROM sessions
+		WHERE session_token = ? AND mobile_no = ? AND is_active = true AND expires_at > ?
+	`).Bind(actionReq.SessionToken, actionReq.PlayerID, true, time.Now()).Scan(&session.SessionToken, &session.MobileNo, &session.IsActive, &session.ExpiresAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")
@@ -514,24 +455,22 @@ func (s *SocketService) HandleHealthCheck() models.HealthCheckResponse {
 
 // ValidateSession validates if a session is active and not expired
 func (s *SocketService) ValidateSession(sessionToken, mobileNo string) bool {
-	ctx := context.Background()
 	var session models.Session
-	err := s.sessionsCollection.FindOne(ctx, bson.M{
-		"session_token": sessionToken,
-		"mobile_no":     mobileNo,
-		"is_active":     true,
-		"expires_at":    bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err := s.cassandraSession.Query(`
+		SELECT session_token, mobile_no, is_active, expires_at
+		FROM sessions
+		WHERE session_token = ? AND mobile_no = ? AND is_active = true AND expires_at > ?
+	`).Bind(sessionToken, mobileNo, true, time.Now()).Scan(&session.SessionToken, &session.MobileNo, &session.IsActive, &session.ExpiresAt)
 
 	return err == nil
 }
 
 // CleanupExpiredSessions removes expired sessions
 func (s *SocketService) CleanupExpiredSessions() error {
-	ctx := context.Background()
-	_, err := s.sessionsCollection.DeleteMany(ctx, bson.M{
-		"expires_at": bson.M{"$lt": time.Now()},
-	})
+	err := s.cassandraSession.Query(`
+		DELETE FROM sessions
+		WHERE expires_at < ?
+	`).Bind(time.Now()).Exec()
 	return err
 }
 
@@ -539,16 +478,13 @@ func (s *SocketService) CleanupExpiredSessions() error {
 func (s *SocketService) HandleStaticMessage(staticReq models.StaticMessageRequest) (*models.StaticMessageResponse, error) {
 	log.Printf("Static message request received for mobile: %s, type: %s", staticReq.MobileNo, staticReq.MessageType)
 
-	ctx := context.Background()
-
 	// Validate session
 	var session models.Session
-	err := s.sessionsCollection.FindOne(ctx, bson.M{
-		"session_token": staticReq.SessionToken,
-		"mobile_no":     staticReq.MobileNo,
-		"is_active":     true,
-		"expires_at":    bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err := s.cassandraSession.Query(`
+		SELECT session_token, mobile_no, is_active, expires_at
+		FROM sessions
+		WHERE session_token = ? AND mobile_no = ? AND is_active = true AND expires_at > ?
+	`).Bind(staticReq.SessionToken, staticReq.MobileNo, true, time.Now()).Scan(&session.SessionToken, &session.MobileNo, &session.IsActive, &session.ExpiresAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")
@@ -819,9 +755,6 @@ func getMapKeys(m map[string]interface{}) []string {
 
 // HandleMainScreen handles main screen requests with authentication validation
 func (s *SocketService) HandleMainScreen(mainReq models.MainScreenRequest) (*models.MainScreenResponse, error) {
-	// Create context for database operations
-	ctx := context.Background()
-
 	// Decrypt the simple JWT token to get the original values used during token creation
 	simpleJWTData, err := utils.ValidateSimpleJWTToken(mainReq.JWTToken)
 	if err != nil {
@@ -845,19 +778,22 @@ func (s *SocketService) HandleMainScreen(mainReq models.MainScreenRequest) (*mod
 
 	// Check if user exists and is active using token mobile number
 	var user models.User
-	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": tokenMobileNo}).Decode(&user)
+	err = s.cassandraSession.Query(`
+		SELECT id, mobile_no, full_name, status, language_code
+		FROM users
+		WHERE mobile_no = ?
+	`).Bind(tokenMobileNo).Scan(&user.ID, &user.MobileNo, &user.FullName, &user.Status, &user.LanguageCode)
 	if err != nil {
 		return nil, fmt.Errorf("user not found or not authenticated")
 	}
 
 	// Check if session exists and is active using token values
 	var session models.Session
-	err = s.sessionsCollection.FindOne(ctx, bson.M{
-		"mobile_no":  tokenMobileNo,
-		"device_id":  tokenDeviceID,
-		"is_active":  true,
-		"expires_at": bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err = s.cassandraSession.Query(`
+		SELECT session_token, device_id, fcm_token, expires_at, is_active
+		FROM sessions
+		WHERE mobile_no = ? AND device_id = ? AND is_active = true AND expires_at > ?
+	`).Bind(tokenMobileNo, tokenDeviceID, true, time.Now()).Scan(&session.SessionToken, &session.DeviceID, &session.FCMToken, &session.ExpiresAt, &session.IsActive)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")
@@ -906,9 +842,6 @@ func (s *SocketService) HandleMainScreen(mainReq models.MainScreenRequest) (*mod
 
 // HandleContestList handles contest list requests with authentication validation
 func (s *SocketService) HandleContestList(contestReq models.ContestRequest) (*models.ContestResponse, error) {
-	// Create context for database operations
-	ctx := context.Background()
-
 	// Decrypt the simple JWT token to get the original values used during token creation
 	simpleJWTData, err := utils.ValidateSimpleJWTToken(contestReq.JWTToken)
 	if err != nil {
@@ -932,19 +865,22 @@ func (s *SocketService) HandleContestList(contestReq models.ContestRequest) (*mo
 
 	// Check if user exists and is active using token mobile number
 	var user models.User
-	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": tokenMobileNo}).Decode(&user)
+	err = s.cassandraSession.Query(`
+		SELECT id, mobile_no, full_name, status, language_code
+		FROM users
+		WHERE mobile_no = ?
+	`).Bind(tokenMobileNo).Scan(&user.ID, &user.MobileNo, &user.FullName, &user.Status, &user.LanguageCode)
 	if err != nil {
 		return nil, fmt.Errorf("user not found or not authenticated")
 	}
 
 	// Check if session exists and is active using token values
 	var session models.Session
-	err = s.sessionsCollection.FindOne(ctx, bson.M{
-		"mobile_no":  tokenMobileNo,
-		"device_id":  tokenDeviceID,
-		"is_active":  true,
-		"expires_at": bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err = s.cassandraSession.Query(`
+		SELECT session_token, device_id, fcm_token, expires_at, is_active
+		FROM sessions
+		WHERE mobile_no = ? AND device_id = ? AND is_active = true AND expires_at > ?
+	`).Bind(tokenMobileNo, tokenDeviceID, true, time.Now()).Scan(&session.SessionToken, &session.DeviceID, &session.FCMToken, &session.ExpiresAt, &session.IsActive)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")
@@ -1000,9 +936,6 @@ func (s *SocketService) HandleContestList(contestReq models.ContestRequest) (*mo
 
 // HandleContestJoin handles contest join requests
 func (s *SocketService) HandleContestJoin(joinReq models.ContestJoinRequest) (*models.ContestJoinResponse, error) {
-	// Create context for database operations
-	ctx := context.Background()
-
 	// Decrypt the simple JWT token to get the original values used during token creation
 	simpleJWTData, err := utils.ValidateSimpleJWTToken(joinReq.JWTToken)
 	if err != nil {
@@ -1026,19 +959,22 @@ func (s *SocketService) HandleContestJoin(joinReq models.ContestJoinRequest) (*m
 
 	// Check if user exists and is active using token mobile number
 	var user models.User
-	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": tokenMobileNo}).Decode(&user)
+	err = s.cassandraSession.Query(`
+		SELECT id, mobile_no, full_name, status, language_code
+		FROM users
+		WHERE mobile_no = ?
+	`).Bind(tokenMobileNo).Scan(&user.ID, &user.MobileNo, &user.FullName, &user.Status, &user.LanguageCode)
 	if err != nil {
 		return nil, fmt.Errorf("user not found or not authenticated")
 	}
 
 	// Check if session exists and is active using token values
 	var session models.Session
-	err = s.sessionsCollection.FindOne(ctx, bson.M{
-		"mobile_no":  tokenMobileNo,
-		"device_id":  tokenDeviceID,
-		"is_active":  true,
-		"expires_at": bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err = s.cassandraSession.Query(`
+		SELECT session_token, device_id, fcm_token, expires_at, is_active
+		FROM sessions
+		WHERE mobile_no = ? AND device_id = ? AND is_active = true AND expires_at > ?
+	`).Bind(tokenMobileNo, tokenDeviceID, true, time.Now()).Scan(&session.SessionToken, &session.DeviceID, &session.FCMToken, &session.ExpiresAt, &session.IsActive)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")
@@ -1128,9 +1064,6 @@ func (s *SocketService) HandleListContestScreen(mainReq models.MainScreenRequest
 
 // HandleContestGap handles contest price gap requests with authentication validation
 func (s *SocketService) HandleContestGap(gapReq models.ContestGapRequest) (*models.ContestGapResponse, error) {
-	// Create context for database operations
-	ctx := context.Background()
-
 	// Decrypt the simple JWT token to get the original values used during token creation
 	simpleJWTData, err := utils.ValidateSimpleJWTToken(gapReq.JWTToken)
 	if err != nil {
@@ -1154,19 +1087,22 @@ func (s *SocketService) HandleContestGap(gapReq models.ContestGapRequest) (*mode
 
 	// Check if user exists and is active using token mobile number
 	var user models.User
-	err = s.usersCollection.FindOne(ctx, bson.M{"mobile_no": tokenMobileNo}).Decode(&user)
+	err = s.cassandraSession.Query(`
+		SELECT id, mobile_no, full_name, status, language_code
+		FROM users
+		WHERE mobile_no = ?
+	`).Bind(tokenMobileNo).Scan(&user.ID, &user.MobileNo, &user.FullName, &user.Status, &user.LanguageCode)
 	if err != nil {
 		return nil, fmt.Errorf("user not found or not authenticated")
 	}
 
 	// Check if session exists and is active using token values
 	var session models.Session
-	err = s.sessionsCollection.FindOne(ctx, bson.M{
-		"mobile_no":  tokenMobileNo,
-		"device_id":  tokenDeviceID,
-		"is_active":  true,
-		"expires_at": bson.M{"$gt": time.Now()},
-	}).Decode(&session)
+	err = s.cassandraSession.Query(`
+		SELECT session_token, device_id, fcm_token, expires_at, is_active
+		FROM sessions
+		WHERE mobile_no = ? AND device_id = ? AND is_active = true AND expires_at > ?
+	`).Bind(tokenMobileNo, tokenDeviceID, true, time.Now()).Scan(&session.SessionToken, &session.DeviceID, &session.FCMToken, &session.ExpiresAt, &session.IsActive)
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid or expired session")

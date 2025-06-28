@@ -13,7 +13,6 @@ import (
 )
 
 func main() {
-	// app := fiber.New()
 	app := fiber.New(fiber.Config{
 		Prefork:       false,
 		CaseSensitive: true,
@@ -25,7 +24,6 @@ func main() {
 				code = e.Code
 			}
 			ctx.Status(code)
-			// You can customize the error response format here
 			return ctx.JSON(fiber.Map{
 				"error": err.Error(),
 			})
@@ -39,11 +37,9 @@ func main() {
 	}
 	fmt.Println("✅ Database initialized successfully")
 
-	// Initialize socket service with database collections
+	// Initialize socket service with Cassandra session
 	fmt.Println("🔧 Initializing socket service...")
-	usersCollection := database.GetUsersCollection()
-	sessionsCollection := database.GetSessionsCollection()
-	socketService := services.NewSocketService(usersCollection, sessionsCollection)
+	socketService := services.NewSocketService(database.CassandraSession)
 	fmt.Println("✅ Socket service initialized")
 
 	// Initialize Socket.IO handler with socket service
@@ -61,8 +57,6 @@ func main() {
 	fmt.Printf("🚀 Server starting on port :%d\n", port)
 	fmt.Printf("🔌 Socket.IO server available at :%d/socket.io\n", port)
 	fmt.Printf("🎮 Gameplay namespace available at :%d/socket.io/gameplay\n", port)
-	fmt.Printf("📊 MongoDB URL: %s\n", config.MongoDBURL)
-	fmt.Printf("🗄️  Database: %s\n", config.DatabaseName)
 
 	log.Fatal(app.Listen(fmt.Sprintf(":%d", port)))
 }

@@ -5,16 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
-)
-
-// Redis configuration constants
-const (
-	RedisURL      = "localhost:6379"
-	RedisPassword = ""
-	RedisDB       = 0
 )
 
 // Service handles all Redis-related operations
@@ -23,12 +18,41 @@ type Service struct {
 	ctx    context.Context
 }
 
+// getRedisConfig gets Redis configuration from environment variables
+func getRedisConfig() (string, string, int) {
+	url := os.Getenv("REDIS_URL")
+	if url == "" {
+		url = "localhost:6379"
+	}
+
+	password := os.Getenv("REDIS_PASSWORD")
+
+	dbStr := os.Getenv("REDIS_DB")
+	db := 0
+	if dbStr != "" {
+		if dbInt, err := strconv.Atoi(dbStr); err == nil {
+			db = dbInt
+		}
+	}
+
+	return url, password, db
+}
+
 // NewService creates a new Redis service instance
 func NewService() *Service {
+	url, password, db := getRedisConfig()
+
 	client := redis.NewClient(&redis.Options{
-		Addr:     RedisURL,
-		Password: RedisPassword,
-		DB:       RedisDB,
+		Addr:     url,
+		Password: password,
+		DB:       db,
+		// Connection pool settings
+		PoolSize:     10,
+		MinIdleConns: 5,
+		// Timeout settings
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
 	})
 
 	ctx := context.Background()
@@ -37,9 +61,9 @@ func NewService() *Service {
 	_, err := client.Ping(ctx).Result()
 	if err != nil {
 		log.Printf("⚠️ Warning: Redis connection failed: %v", err)
-		log.Printf("💡 Make sure Redis is running on %s", RedisURL)
+		log.Printf("💡 Make sure Redis is running on %s", url)
 	} else {
-		log.Printf("✅ Redis connected successfully to %s", RedisURL)
+		log.Printf("✅ Redis connected successfully to %s", url)
 	}
 
 	return &Service{
