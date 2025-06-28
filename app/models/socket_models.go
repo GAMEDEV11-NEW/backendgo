@@ -219,7 +219,7 @@ type User struct {
 
 // Session represents a user session
 type Session struct {
-	ID           string    `json:"id" bson:"_id,omitempty"`
+	ID           string    `json:"id,omitempty" bson:"_id,omitempty"`
 	UserID       string    `json:"user_id" bson:"user_id"`
 	SessionToken string    `json:"session_token" bson:"session_token"`
 	JWTToken     string    `json:"jwt_token" bson:"jwt_token"`
@@ -471,4 +471,33 @@ type ContestGapResponse struct {
 	Timestamp   string                 `json:"timestamp"`
 	SocketID    string                 `json:"socket_id"`
 	Event       string                 `json:"event"`
+}
+
+// OTPData represents OTP data stored in the database
+type OTPData struct {
+	PhoneOrEmail string `json:"phone_or_email"`
+	OTPCode      string `json:"otp_code"`
+	CreatedAt    string `json:"created_at"`
+	ExpiresAt    string `json:"expires_at"`
+	Purpose      string `json:"purpose"`
+	IsVerified   bool   `json:"is_verified"`
+	AttemptCount int    `json:"attempt_count"`
+}
+
+// ResendOTPRequest represents resend OTP request
+type ResendOTPRequest struct {
+	MobileNo     string `json:"mobile_no"`
+	SessionToken string `json:"session_token"`
+}
+
+// ResendOTPResponse represents resend OTP response
+type ResendOTPResponse struct {
+	Status       string `json:"status"`
+	Message      string `json:"message"`
+	MobileNo     string `json:"mobile_no"`
+	SessionToken string `json:"session_token"`
+	OTP          int    `json:"otp"`
+	Timestamp    string `json:"timestamp"`
+	SocketID     string `json:"socket_id"`
+	Event        string `json:"event"`
 }
