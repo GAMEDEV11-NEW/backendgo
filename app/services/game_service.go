@@ -1,10 +1,12 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"gofiber/app/models"
 	"gofiber/app/utils"
 	"gofiber/redis"
+	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -607,6 +609,66 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 		teamID = fmt.Sprintf("team_%s_%s", joinReq.ContestID, time.Now().Format("20060102150405"))
 	}
 
+	// Insert into league_joins table
+	leagueID := joinReq.ContestID
+	status := "pending"
+	userID := user.ID
+	joinUUID := gocql.TimeUUID()
+	joinedAt := time.Now().UTC().Format(time.RFC3339)
+	updatedAt := joinedAt
+	inviteCode := "" // You can generate or leave empty
+	role := "player"
+
+	extraDataMap := map[string]interface{}{
+		"team_id":   teamID,
+		"team_name": joinReq.TeamName,
+		"team_size": joinReq.TeamSize,
+	}
+	extraDataBytes, _ := json.Marshal(extraDataMap)
+	extraData := string(extraDataBytes)
+
+	// First, check if user has any existing pending entries and update their status_id
+	iter := s.cassandraSession.Query(`
+		SELECT status_id, joined_at FROM league_joins
+		WHERE league_id = ? AND status = ? AND user_id = ?
+	`, leagueID, "pending", userID).Iter()
+
+	var existingStatusID, existingJoinedAt string
+	hasExisting := false
+	for iter.Scan(&existingStatusID, &existingJoinedAt) {
+		hasExisting = true
+		// Update existing entry status_id to "2" (superseded)
+		err = s.cassandraSession.Query(`
+			UPDATE league_joins
+			SET status_id = ?, updated_at = ?
+			WHERE league_id = ? AND status = ? AND user_id = ? AND joined_at = ?
+		`, "2", time.Now().UTC().Format(time.RFC3339), leagueID, "pending", userID, existingJoinedAt).Exec()
+		if err != nil {
+			log.Printf("⚠️ Failed to update existing entry status_id for user %s: %v", userID, err)
+		} else {
+			log.Printf("🔄 Updated existing entry status_id to '2' for user %s in contest %s", userID, leagueID)
+		}
+	}
+	iter.Close()
+
+	// Determine status_id for new entry
+	newStatusID := "1" // Default for first join
+	if hasExisting {
+		newStatusID = "1" // New entry always gets "1", previous gets "2"
+		log.Printf("📝 User %s rejoining contest %s, new entry gets status_id '1'", userID, leagueID)
+	} else {
+		log.Printf("📝 User %s first time joining contest %s, status_id '1'", userID, leagueID)
+	}
+
+	// Now insert the new league_joins record
+	err = s.cassandraSession.Query(`
+		INSERT INTO league_joins (league_id, status, status_id, user_id, id, joined_at, updated_at, invite_code, role, extra_data)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).Bind(leagueID, status, newStatusID, userID, joinUUID, joinedAt, updatedAt, inviteCode, role, extraData).Exec()
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert league join: %v", err)
+	}
+
 	return &models.ContestJoinResponse{
 		Status:    "success",
 		Message:   "Successfully joined contest",
@@ -986,4 +1048,4 @@ func (s *GameService) convertToFloat(value interface{}) float64 {
 // GetCassandraSession returns the Cassandra session for external access
 func (s *GameService) GetCassandraSession() *gocql.Session {
 	return s.cassandraSession
-} 
+}

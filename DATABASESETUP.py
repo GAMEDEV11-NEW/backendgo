@@ -143,6 +143,31 @@ try:
             PRIMARY KEY ((phone_or_email), purpose, created_at)
         ) WITH CLUSTERING ORDER BY (purpose ASC, created_at DESC);
     """)
+
+  
+
+    # Step 10: Create the league_joins table with clustering columns and order for efficient queries
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS league_joins (
+            league_id TEXT,
+            status TEXT,
+            user_id TEXT,
+            id UUID,
+            joined_at TEXT,
+            updated_at TEXT,
+            invite_code TEXT,
+            role TEXT,
+            extra_data TEXT,
+            PRIMARY KEY ((league_id, status), user_id, joined_at)
+        ) WITH CLUSTERING ORDER BY (user_id ASC, joined_at DESC)
+    """)
+
+    # Add status_id column to existing table
+    try:
+        session.execute("ALTER TABLE league_joins ADD status_id TEXT")
+        print("✅ Added status_id column to league_joins table")
+    except Exception as e:
+        print(f"ℹ️ status_id column already exists or error: {e}")
     
     print("✅ All keyspace and tables created successfully!")
 
