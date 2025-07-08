@@ -22,6 +22,8 @@ type GameService struct {
 	redisService     *redis.Service
 }
 
+// LeagueJoin struct moved to models package
+
 // NewGameService creates a new game service instance using Cassandra
 func NewGameService(cassandraSession *gocql.Session) *GameService {
 	if cassandraSession == nil {
@@ -363,13 +365,6 @@ func (s *GameService) getGameSubListData() map[string]interface{} {
 }
 
 // Helper function to get map keys for debugging
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
 
 // HandleMainScreen handles main screen requests with authentication validation
 func (s *GameService) HandleMainScreen(mainReq models.MainScreenRequest) (*models.MainScreenResponse, error) {
@@ -614,8 +609,9 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 	status := "pending"
 	userID := user.ID
 	joinUUID := gocql.TimeUUID()
-	joinedAt := time.Now().UTC().Format(time.RFC3339)
-	updatedAt := joinedAt
+	joinedAtTime := time.Now().UTC()
+	joinMonth := joinedAtTime.Format("2006-01")
+	updatedAtTime := joinedAtTime
 	inviteCode := "" // You can generate or leave empty
 	role := "player"
 
@@ -629,25 +625,74 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 
 	// First, check if user has any existing pending entries and update their status_id
 	iter := s.cassandraSession.Query(`
-		SELECT status_id, joined_at FROM league_joins
-		WHERE league_id = ? AND status = ? AND user_id = ?
-	`, leagueID, "pending", userID).Iter()
+		SELECT status_id, join_month, joined_at FROM league_joins
+		WHERE user_id = ? AND status_id = ? AND join_month = ?
+		ALLOW FILTERING
+	`, userID, "1", joinMonth).Iter()
 
-	var existingStatusID, existingJoinedAt string
+	var existingStatusID, existingJoinMonth string
+	var existingJoinedAt time.Time
 	hasExisting := false
-	for iter.Scan(&existingStatusID, &existingJoinedAt) {
+	for iter.Scan(&existingStatusID, &existingJoinMonth, &existingJoinedAt) {
 		hasExisting = true
-		// Update existing entry status_id to "2" (superseded)
+		// Read the old row from league_joins
+		var oldUserID, oldLeagueID string
+		var oldOpponentUserID, oldOpponentLeagueID string
+		var oldID gocql.UUID
 		err = s.cassandraSession.Query(`
-			UPDATE league_joins
-			SET status_id = ?, updated_at = ?
-			WHERE league_id = ? AND status = ? AND user_id = ? AND joined_at = ?
-		`, "2", time.Now().UTC().Format(time.RFC3339), leagueID, "pending", userID, existingJoinedAt).Exec()
+			SELECT user_id, league_id, id, opponent_user_id, opponent_league_id
+			FROM league_joins
+			WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+		`, userID, existingStatusID, existingJoinMonth, existingJoinedAt).Scan(
+			&oldUserID, &oldLeagueID, &oldID, &oldOpponentUserID, &oldOpponentLeagueID)
 		if err != nil {
-			log.Printf("⚠️ Failed to update existing entry status_id for user %s: %v", userID, err)
-		} else {
-			log.Printf("🔄 Updated existing entry status_id to '2' for user %s in contest %s", userID, leagueID)
+			log.Printf("⚠️ Failed to read old league_joins row for status change: %v", err)
+			continue
 		}
+		// Insert new row with status_id = '2' in league_joins
+		err = s.cassandraSession.Query(`
+			INSERT INTO league_joins (user_id, status_id, join_month, joined_at, league_id, id, opponent_user_id, opponent_league_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`).Bind(oldUserID, "2", existingJoinMonth, existingJoinedAt, oldLeagueID, oldID, oldOpponentUserID, oldOpponentLeagueID).Exec()
+		if err != nil {
+			log.Printf("⚠️ Failed to insert new league_joins row for status change: %v", err)
+			continue
+		}
+		// Delete old row in league_joins
+		err = s.cassandraSession.Query(`
+			DELETE FROM league_joins WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+		`, oldUserID, existingStatusID, existingJoinMonth, existingJoinedAt).Exec()
+		if err != nil {
+			log.Printf("⚠️ Failed to delete old league_joins row for status change: %v", err)
+			continue
+		}
+		// Now update pending_league_joins for the same entry
+		joinDay := existingJoinedAt.Format("2006-01-02")
+		var oldPendingID gocql.UUID
+		var oldPendingOpponentUserID string
+		err = s.cassandraSession.Query(`
+			SELECT id, opponent_user_id
+			FROM pending_league_joins
+			WHERE status_id = ? AND join_day = ? AND league_id = ? AND joined_at = ?
+		`, "1", joinDay, oldLeagueID, existingJoinedAt).Scan(&oldPendingID, &oldPendingOpponentUserID)
+		if err == nil {
+			// Insert new row with status_id = '2' in pending_league_joins
+			err = s.cassandraSession.Query(`
+				INSERT INTO pending_league_joins (status_id, join_day, league_id, joined_at, id, opponent_user_id, user_id)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
+			`).Bind("2", joinDay, oldLeagueID, existingJoinedAt, oldPendingID, oldPendingOpponentUserID, userID).Exec()
+			if err != nil {
+				log.Printf("⚠️ Failed to insert new pending_league_joins row for status change: %v", err)
+			}
+			// Delete old row in pending_league_joins
+			err = s.cassandraSession.Query(`
+				DELETE FROM pending_league_joins WHERE status_id = ? AND join_day = ? AND league_id = ? AND joined_at = ?
+			`, "1", joinDay, oldLeagueID, existingJoinedAt).Exec()
+			if err != nil {
+				log.Printf("⚠️ Failed to delete old pending_league_joins row for status change: %v", err)
+			}
+		}
+		log.Printf("🔄 Updated existing entry status_id to '2' for user %s in join_month %s and pending_league_joins", userID, existingJoinMonth)
 	}
 	iter.Close()
 
@@ -662,11 +707,21 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 
 	// Now insert the new league_joins record
 	err = s.cassandraSession.Query(`
-		INSERT INTO league_joins (league_id, status, status_id, user_id, id, joined_at, updated_at, invite_code, role, extra_data)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`).Bind(leagueID, status, newStatusID, userID, joinUUID, joinedAt, updatedAt, inviteCode, role, extraData).Exec()
+		INSERT INTO league_joins (user_id, status_id, join_month, joined_at, league_id, status, extra_data, id, invite_code, opponent_league_id, opponent_user_id, role, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).Bind(userID, newStatusID, joinMonth, joinedAtTime, leagueID, status, extraData, joinUUID, inviteCode, "NULL", "NULL", role, updatedAtTime).Exec()
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert league join: %v", err)
+	}
+
+	// Also insert into pending_league_joins for fast pending lookups (new schema)
+	joinDay := joinedAtTime.Format("2006-01-02")
+	err = s.cassandraSession.Query(`
+		INSERT INTO pending_league_joins (status_id, join_day, league_id, joined_at, id, opponent_user_id, user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`).Bind(newStatusID, joinDay, leagueID, joinedAtTime, joinUUID, "NULL", userID).Exec()
+	if err != nil {
+		log.Printf("⚠️ Failed to insert into pending_league_joins: %v", err)
 	}
 
 	return &models.ContestJoinResponse{
@@ -678,11 +733,12 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 		TeamID:    teamID,
 		JoinTime:  time.Now().UTC().Format(time.RFC3339),
 		Data: map[string]interface{}{
-			"contest_id":  joinReq.ContestID,
+			"contest_id":  joinUUID,
 			"team_name":   joinReq.TeamName,
 			"team_size":   joinReq.TeamSize,
 			"join_status": "confirmed",
 			"next_steps":  "Wait for contest start",
+			"user_id":     user.ID,
 		},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		SocketID:  "",
@@ -1048,4 +1104,323 @@ func (s *GameService) convertToFloat(value interface{}) float64 {
 // GetCassandraSession returns the Cassandra session for external access
 func (s *GameService) GetCassandraSession() *gocql.Session {
 	return s.cassandraSession
+}
+
+// MatchAndUpdateOpponent finds another unmatched user in the same league, updates both users' records, and returns the opponent info
+func (s *GameService) MatchAndUpdateOpponent(currentUserID, leagueID string, currentJoinedAt time.Time) (*models.LeagueJoin, error) {
+	joinDay := currentJoinedAt.Format("2006-01-02")
+	var currentUserOpponentUserID *string
+	err := s.cassandraSession.Query(`
+		SELECT opponent_user_id
+		FROM pending_league_joins
+		WHERE status_id = ? AND join_day = ? AND league_id = ? AND user_id = ?
+		LIMIT 1
+	`, "1", joinDay, leagueID, currentUserID).Scan(&currentUserOpponentUserID)
+
+	if err == nil && currentUserOpponentUserID != nil && *currentUserOpponentUserID != "" {
+		return nil, nil
+	}
+
+	// Step 1: Find a candidate opponent in pending_league_joins
+	var opponentUserID string
+	var opponentJoinedAt time.Time
+	var opponentID gocql.UUID
+	iter := s.cassandraSession.Query(`
+		SELECT user_id, joined_at, id
+		FROM pending_league_joins
+		WHERE status_id = ? AND join_day = ? AND league_id = ? 
+		ORDER BY joined_at ASC
+		LIMIT 1
+	`, "1", joinDay, leagueID).Iter()
+
+	if !iter.Scan(&opponentUserID, &opponentJoinedAt, &opponentID) {
+		iter.Close()
+		return nil, nil // No match found
+	}
+	iter.Close()
+
+	if opponentUserID == currentUserID {
+		return nil, nil
+	}
+
+	// Step 2: Fetch the full row for that user from league_joins
+	opponentJoinMonth := opponentJoinedAt.Format("2006-01")
+	var fullOpponent models.LeagueJoin
+	err = s.cassandraSession.Query(`
+		SELECT user_id, league_id, joined_at, id, opponent_user_id, opponent_league_id
+		FROM league_joins
+		WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+		LIMIT 1
+	`, opponentUserID, "1", opponentJoinMonth, opponentJoinedAt).Scan(
+		&fullOpponent.UserID, &fullOpponent.LeagueID, &fullOpponent.JoinedAt, &fullOpponent.ID, &fullOpponent.OpponentUserID, &fullOpponent.OpponentLeagueID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 3: Update both tables for both users
+	currentJoinMonth := currentJoinedAt.Format("2006-01")
+	currentJoinDay := currentJoinedAt.Format("2006-01-02")
+	currentJoinedAtTime := currentJoinedAt
+
+	err = s.cassandraSession.Query(`
+		UPDATE league_joins SET opponent_user_id = ?, opponent_league_id = ?
+		WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+	`, opponentUserID, leagueID, currentUserID, "1", currentJoinMonth, currentJoinedAtTime).Exec()
+
+	err = s.cassandraSession.Query(`
+		UPDATE league_joins SET opponent_user_id = ?, opponent_league_id = ?
+		WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+	`, currentUserID, leagueID, opponentUserID, "1", opponentJoinMonth, opponentJoinedAt).Exec()
+
+	err = s.cassandraSession.Query(`
+		UPDATE pending_league_joins SET opponent_user_id = ?
+		WHERE status_id = ? AND join_day = ? AND league_id = ? AND joined_at = ?
+	`, opponentUserID, "1", currentJoinDay, leagueID, currentJoinedAtTime).Exec()
+
+	err = s.cassandraSession.Query(`
+		UPDATE pending_league_joins SET opponent_user_id = ?
+		WHERE status_id = ? AND join_day = ? AND league_id = ? AND joined_at = ?
+	`, currentUserID, "1", joinDay, leagueID, opponentJoinedAt).Exec()
+
+	// Step 4: Create match pair entry in match_pairs table
+	err = s.createMatchPairEntry(currentUserID, opponentUserID, leagueID, currentJoinedAt)
+	if err != nil {
+		log.Printf("⚠️ Warning: Failed to create match pair entry: %v", err)
+		// Don't return error here as the main matching logic succeeded
+	}
+
+	return &fullOpponent, nil
+}
+
+// createMatchPairEntry creates a match pair entry in the match_pairs table
+func (s *GameService) createMatchPairEntry(user1ID, user2ID, leagueID string, matchTime time.Time) error {
+	// Generate UUID for the match pair
+	id := gocql.TimeUUID()
+	now := time.Now()
+
+	// Don't store any data in user1_data and user2_data fields
+	user1Data := ""
+	user2Data := ""
+
+	// Insert the match pair
+	query := `INSERT INTO match_pairs (id, user1_id, user2_id, user1_data, user2_data, status, created_at, updated_at) 
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+
+	err := s.cassandraSession.Query(query, id, user1ID, user2ID, user1Data, user2Data, "active", now, now).Exec()
+	if err != nil {
+		log.Printf("❌ Error creating match pair entry: %v", err)
+		return fmt.Errorf("failed to create match pair entry: %v", err)
+	}
+
+	log.Printf("✅ Created match pair entry with ID: %s for users %s and %s in league %s", id.String(), user1ID, user2ID, leagueID)
+	return nil
+}
+
+// GetLeagueJoinEntry fetches a user's league_joins entry for a contest
+func (s *GameService) GetLeagueJoinEntry(userID, contestID string) (*models.LeagueJoin, error) {
+	log.Printf("🔍 GetLeagueJoinEntry - userID: %s, contestID: %s", userID, contestID)
+
+	// Debug: Check what's in the database for this user
+	log.Printf("🔍 DEBUG: Checking league_joins table for user %s in contest %s", userID, contestID)
+
+	iter := s.cassandraSession.Query(`
+		SELECT user_id, status_id, join_month, joined_at, league_id, id, opponent_user_id, opponent_league_id
+		FROM league_joins
+		WHERE user_id = ? AND league_id = ? AND status_id = ?
+		ALLOW FILTERING
+	`, userID, contestID, "1").Iter()
+
+	var (
+		entry       models.LeagueJoin
+		statusID    string
+		joinMonth   string
+		joinedAt    time.Time
+		found       bool
+		latestTime  time.Time
+		latestEntry models.LeagueJoin
+	)
+	for iter.Scan(&entry.UserID, &statusID, &joinMonth, &joinedAt, &entry.LeagueID, &entry.ID, &entry.OpponentUserID, &entry.OpponentLeagueID) {
+		log.Printf("🔍 DEBUG: Found entry - User: %s, Status: %s, Month: %s, Joined: %s, League: %s, Opponent: %s, OpponentLeague: %s",
+			entry.UserID, statusID, joinMonth, joinedAt.Format(time.RFC3339), entry.LeagueID, entry.OpponentUserID, entry.OpponentLeagueID)
+
+		if !found || joinedAt.After(latestTime) {
+			latestEntry = entry
+			latestEntry.JoinedAt = joinedAt
+			latestTime = joinedAt
+			found = true
+			log.Printf("✅ Found league join entry: userID=%s, contestID=%s, joinedAt=%s", entry.UserID, entry.LeagueID, joinedAt.Format(time.RFC3339))
+		}
+	}
+	iter.Close()
+
+	if !found {
+		log.Printf("❌ No league join entry found for userID=%s, contestID=%s", userID, contestID)
+		return nil, fmt.Errorf("entry not found")
+	}
+	return &latestEntry, nil
+}
+
+// UpdateOpponentDetails updates opponent details for a user's league join entry
+func (s *GameService) UpdateOpponentDetails(userID, leagueID, opponentUserID, opponentLeagueID, joinedAt string) error {
+	joinMonth := ""
+	if t, err := time.Parse(time.RFC3339, joinedAt); err == nil {
+		joinMonth = t.Format("2006-01")
+	}
+
+	// Update league_joins for the user
+	err := s.cassandraSession.Query(`
+		UPDATE league_joins SET opponent_user_id = ?, opponent_league_id = ?
+		WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+	`, opponentUserID, opponentLeagueID, userID, "1", joinMonth, joinedAt).Exec()
+	if err != nil {
+		log.Printf("⚠️ Failed to update league_joins opponent details: %v", err)
+		return err
+	}
+
+	// Update pending_league_joins for the user
+	joinDay := ""
+	if t, err := time.Parse(time.RFC3339, joinedAt); err == nil {
+		joinDay = t.Format("2006-01-02")
+	}
+	err = s.cassandraSession.Query(`
+		UPDATE pending_league_joins SET opponent_user_id = ?
+		WHERE status_id = ? AND join_day = ? AND league_id = ? AND joined_at = ?
+	`, opponentUserID, "1", joinDay, leagueID, joinedAt).Exec()
+	if err != nil {
+		log.Printf("⚠️ Failed to update pending_league_joins opponent details: %v", err)
+		return err
+	}
+
+	log.Printf("✅ Updated opponent details for user %s in league %s: opponent=%s", userID, leagueID, opponentUserID)
+	return nil
+}
+
+// UpdateLeagueJoinStatus updates the status_id for a user's league_joins entry
+func (s *GameService) UpdateLeagueJoinStatus(userID, leagueID, newStatusID, joinedAt string) error {
+	joinMonth := ""
+	if t, err := time.Parse(time.RFC3339, joinedAt); err == nil {
+		joinMonth = t.Format("2006-01")
+	}
+
+	// 1. Read the old row
+	var oldUserID, oldLeagueID string
+	var oldJoinedAt time.Time
+	var oldOpponentUserID, oldOpponentLeagueID string
+	var oldID gocql.UUID
+	err := s.cassandraSession.Query(`
+		SELECT user_id, league_id, joined_at, id, opponent_user_id, opponent_league_id
+		FROM league_joins
+		WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+	`, userID, "1", joinMonth, joinedAt).Scan(
+		&oldUserID, &oldLeagueID, &oldJoinedAt, &oldID, &oldOpponentUserID, &oldOpponentLeagueID)
+	if err != nil {
+		log.Printf("⚠️ Failed to read old league_joins row for status change: %v", err)
+		return err
+	}
+
+	// 2. Insert new row with new status_id
+	err = s.cassandraSession.Query(`
+		INSERT INTO league_joins (user_id, status_id, join_month, joined_at, league_id, id, opponent_user_id, opponent_league_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`).Bind(oldUserID, newStatusID, joinMonth, oldJoinedAt, oldLeagueID, oldID, oldOpponentUserID, oldOpponentLeagueID).Exec()
+	if err != nil {
+		log.Printf("⚠️ Failed to insert new league_joins row for status change: %v", err)
+		return err
+	}
+
+	// 3. Delete old row
+	err = s.cassandraSession.Query(`
+		DELETE FROM league_joins WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+	`, oldUserID, "1", joinMonth, oldJoinedAt).Exec()
+	if err != nil {
+		log.Printf("⚠️ Failed to delete old league_joins row for status change: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// UpdateLeagueJoinStatusBoth updates status_id in both league_joins and pending_league_joins for all pending entries for the user and league in the last 3 months
+func (s *GameService) UpdateLeagueJoinStatusBoth(userID, leagueID, newStatusID, _ string) error {
+	now := time.Now()
+	months := []string{
+		now.Format("2006-01"),
+		now.AddDate(0, -1, 0).Format("2006-01"),
+	}
+	for _, joinMonth := range months {
+		iter := s.cassandraSession.Query(`
+			SELECT joined_at, league_id
+			FROM league_joins
+			WHERE user_id = ? AND status_id = ? AND join_month = ?
+		`, userID, "1", joinMonth).Iter()
+
+		var joinedAt time.Time
+		var leagueIDFound string
+		for iter.Scan(&joinedAt, &leagueIDFound) {
+			if leagueIDFound != leagueID {
+				continue
+			}
+			// Read the old row
+			var status, extraData, inviteCode, opponentLeagueID, opponentUserID, role string
+			var id gocql.UUID
+			var updatedAt time.Time
+			err := s.cassandraSession.Query(`
+				SELECT status, extra_data, id, invite_code, opponent_league_id, opponent_user_id, role, updated_at
+				FROM league_joins
+				WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+			`, userID, "1", joinMonth, joinedAt).Scan(&status, &extraData, &id, &inviteCode, &opponentLeagueID, &opponentUserID, &role, &updatedAt)
+			if err != nil {
+				continue
+			}
+			// Insert new row with newStatusID in league_joins (preserving opponent details)
+			err = s.cassandraSession.Query(`
+				INSERT INTO league_joins (user_id, status_id, join_month, joined_at, league_id, status, extra_data, id, invite_code, opponent_league_id, opponent_user_id, role, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`).Bind(userID, newStatusID, joinMonth, joinedAt, leagueIDFound, status, extraData, id, inviteCode, opponentLeagueID, opponentUserID, role, updatedAt).Exec()
+			if err != nil {
+				continue
+			}
+			// Delete old row in league_joins
+			err = s.cassandraSession.Query(`
+				DELETE FROM league_joins WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+			`, userID, "1", joinMonth, joinedAt).Exec()
+			if err != nil {
+				continue
+			}
+			// Update all matching pending_league_joins entries for this user, league, and joinedAt (could be multiple)
+			joinDay := joinedAt.Format("2006-01-02")
+			pendingIter := s.cassandraSession.Query(`
+				SELECT id, opponent_user_id, user_id, joined_at
+				FROM pending_league_joins
+				WHERE status_id = ? AND join_day = ? AND league_id = ?
+			`, "1", joinDay, leagueIDFound).Iter()
+			var pendingID gocql.UUID
+			var pendingOpponentUserID, pendingUserID string
+			var pendingJoinedAt time.Time
+			for pendingIter.Scan(&pendingID, &pendingOpponentUserID, &pendingUserID, &pendingJoinedAt) {
+				if pendingUserID != userID {
+					continue
+				}
+				// Insert new row with newStatusID (preserving opponent details)
+				err = s.cassandraSession.Query(`
+					INSERT INTO pending_league_joins (status_id, join_day, league_id, joined_at, id, opponent_user_id, user_id)
+					VALUES (?, ?, ?, ?, ?, ?, ?)
+				`).Bind(newStatusID, joinDay, leagueIDFound, pendingJoinedAt, pendingID, pendingOpponentUserID, userID).Exec()
+				if err != nil {
+					continue
+				}
+				// Delete old row
+				err = s.cassandraSession.Query(`
+					DELETE FROM pending_league_joins WHERE status_id = ? AND join_day = ? AND league_id = ? AND joined_at = ?
+				`, "1", joinDay, leagueIDFound, pendingJoinedAt).Exec()
+				if err != nil {
+					continue
+				}
+			}
+			pendingIter.Close()
+		}
+		iter.Close()
+	}
+	return nil
 }

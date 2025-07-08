@@ -20,6 +20,7 @@ import (
 type AuthService struct {
 	cassandraSession *gocql.Session
 	redisService     *redis.Service
+	sessionService   *SessionService
 }
 
 // NewAuthService creates a new auth service instance using Cassandra
@@ -31,6 +32,7 @@ func NewAuthService(cassandraSession *gocql.Session) *AuthService {
 	service := &AuthService{
 		cassandraSession: cassandraSession,
 		redisService:     redisService,
+		sessionService:   NewSessionService(cassandraSession),
 	}
 	return service
 }
@@ -72,15 +74,17 @@ func (s *AuthService) HandleLogin(loginReq models.LoginRequest) (*models.LoginRe
 	// Check if user exists
 	var existingUser models.User
 	err := s.cassandraSession.Query(`
-		SELECT mobile_no, status, created_at
+		SELECT id, mobile_no, status, created_at
 		FROM users
 		WHERE mobile_no = ?
 		ALLOW FILTERING
-	`).Bind(loginReq.MobileNo).Scan(&existingUser.MobileNo, &existingUser.Status, &existingUser.CreatedAt)
+	`).Bind(loginReq.MobileNo).Scan(&existingUser.ID, &existingUser.MobileNo, &existingUser.Status, &existingUser.CreatedAt)
+
+	userID := existingUser.ID
 
 	if err != nil {
 		// Create new user
-		userID := uuid.New().String()
+		userID = uuid.New().String()
 		now := time.Now()
 		err = s.cassandraSession.Query(`
 			INSERT INTO users (id, mobile_no, status, created_at, updated_at)
@@ -105,13 +109,25 @@ func (s *AuthService) HandleLogin(loginReq models.LoginRequest) (*models.LoginRe
 		return nil, fmt.Errorf("failed to store OTP: %v", err)
 	}
 
-	// Create session
+	// Create session using SessionService (Redis + Cassandra)
 	sessionToken := uuid.New().String()
 	sessionExpiry := time.Now().Add(24 * time.Hour)
-	err = s.cassandraSession.Query(`
-		INSERT INTO sessions (session_token, mobile_no, device_id, fcm_token, created_at, expires_at, is_active, jwt_token)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`).Bind(sessionToken, loginReq.MobileNo, loginReq.DeviceID, loginReq.FCMToken, time.Now(), sessionExpiry, true, "").Exec()
+
+	sessionData := SessionData{
+		SessionToken: sessionToken,
+		MobileNo:     loginReq.MobileNo,
+		UserID:       userID,
+		DeviceID:     loginReq.DeviceID,
+		FCMToken:     loginReq.FCMToken,
+		JWTToken:     "", // Will be set after OTP verification
+		SocketID:     loginReq.SocketID,
+		IsActive:     true,
+		CreatedAt:    time.Now(),
+		ExpiresAt:    sessionExpiry,
+		UserStatus:   existingUser.Status,
+	}
+
+	err = s.sessionService.CreateSession(sessionData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %v", err)
 	}
@@ -138,17 +154,15 @@ func (s *AuthService) HandleLogin(loginReq models.LoginRequest) (*models.LoginRe
 
 // HandleOTPVerification verifies OTP and returns user status
 func (s *AuthService) HandleOTPVerification(otpReq models.OTPVerificationRequest) (*models.OTPVerificationResponse, error) {
-	// Validate session
-	var session models.Session
-	err := s.cassandraSession.Query(`
-		SELECT session_token, device_id, fcm_token, expires_at, is_active, created_at
-		FROM sessions
-		WHERE session_token = ? AND mobile_no = ? AND is_active = true AND expires_at > ?
-		ALLOW FILTERING
-	`).Bind(otpReq.SessionToken, otpReq.MobileNo, time.Now()).Scan(&session.SessionToken, &session.DeviceID, &session.FCMToken, &session.ExpiresAt, &session.IsActive, &session.CreatedAt)
-
+	// Validate session using SessionService (Redis + Cassandra)
+	sessionData, err := s.sessionService.GetSession(otpReq.SessionToken)
 	if err != nil {
-		return nil, fmt.Errorf("invalid or expired session")
+		return nil, fmt.Errorf("invalid or expired session: %v", err)
+	}
+
+	// Verify mobile number matches
+	if sessionData.MobileNo != otpReq.MobileNo {
+		return nil, fmt.Errorf("session mobile number mismatch")
 	}
 
 	// Validate OTP format
@@ -249,17 +263,18 @@ func (s *AuthService) HandleOTPVerification(otpReq models.OTPVerificationRequest
 	}
 
 	// Generate simple JWT token with only mobile_no, device_id, and fcm_token
-	jwtToken, err := utils.GenerateSimpleJWTToken(otpReq.MobileNo, session.DeviceID, session.FCMToken)
+	jwtToken, err := utils.GenerateSimpleJWTToken(otpReq.MobileNo, sessionData.DeviceID, sessionData.FCMToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate JWT token: %v", err)
 	}
 
-	// Update session with JWT token
-	err = s.cassandraSession.Query(`
-		UPDATE sessions
-		SET jwt_token = ?
-		WHERE mobile_no = ? AND device_id = ? AND created_at = ?
-	`).Bind(jwtToken, otpReq.MobileNo, session.DeviceID, session.CreatedAt).Exec()
+	// Update session with JWT token using SessionService
+	updates := map[string]interface{}{
+		"jwt_token":   jwtToken,
+		"user_status": userStatus,
+	}
+
+	err = s.sessionService.UpdateSession(otpReq.SessionToken, updates)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update session with JWT token: %v", err)
 	}
@@ -268,29 +283,27 @@ func (s *AuthService) HandleOTPVerification(otpReq models.OTPVerificationRequest
 		Status:       "success",
 		Message:      "OTP verified successfully",
 		MobileNo:     otpReq.MobileNo,
-		DeviceID:     session.DeviceID,
+		DeviceID:     sessionData.DeviceID,
 		SessionToken: otpReq.SessionToken,
 		JWTToken:     jwtToken,
 		UserStatus:   userStatus,
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
-		SocketID:     "",
+		SocketID:     sessionData.SocketID,
 		Event:        "otp:verified",
 	}, nil
 }
 
 // HandleSetProfile sets up user profile
 func (s *AuthService) HandleSetProfile(profileReq models.SetProfileRequest) (*models.SetProfileResponse, error) {
-	// Validate session
-	var session models.Session
-	err := s.cassandraSession.Query(`
-		SELECT session_token, mobile_no, is_active, expires_at
-		FROM sessions
-		WHERE session_token = ? AND mobile_no = ? AND is_active = true AND expires_at > ?
-		ALLOW FILTERING
-	`).Bind(profileReq.SessionToken, profileReq.MobileNo, time.Now()).Scan(&session.SessionToken, &session.MobileNo, &session.IsActive, &session.ExpiresAt)
-
+	// Validate session using SessionService (Redis + Cassandra)
+	sessionData, err := s.sessionService.GetSession(profileReq.SessionToken)
 	if err != nil {
-		return nil, fmt.Errorf("invalid or expired session")
+		return nil, fmt.Errorf("invalid or expired session: %v", err)
+	}
+
+	// Verify mobile number matches
+	if sessionData.MobileNo != profileReq.MobileNo {
+		return nil, fmt.Errorf("session mobile number mismatch")
 	}
 
 	// Get user ID first
@@ -306,7 +319,7 @@ func (s *AuthService) HandleSetProfile(profileReq models.SetProfileRequest) (*mo
 	}
 
 	// Update user profile
-	
+
 	// Convert ProfileData to JSON string
 	profileDataJSON := ""
 	if profileReq.ProfileData.Avatar != "" || profileReq.ProfileData.Bio != "" || len(profileReq.ProfileData.Preferences) > 0 {
@@ -316,7 +329,7 @@ func (s *AuthService) HandleSetProfile(profileReq models.SetProfileRequest) (*mo
 		}
 		profileDataJSON = string(profileDataBytes)
 	}
-	
+
 	err = s.cassandraSession.Query(`
 		UPDATE users
 		SET full_name = ?, state = ?, referred_by = ?, profile_data = ?
@@ -373,7 +386,7 @@ func (s *AuthService) HandleSetLanguage(langReq models.SetLanguageRequest) (*mod
 	}
 
 	// Update user language preferences
-	
+
 	// Convert UserPreferences to JSON string
 	userPreferencesJSON := ""
 	if langReq.UserPreferences.DateFormat != "" || langReq.UserPreferences.TimeFormat != "" || langReq.UserPreferences.Currency != "" {
@@ -383,7 +396,7 @@ func (s *AuthService) HandleSetLanguage(langReq models.SetLanguageRequest) (*mod
 		}
 		userPreferencesJSON = string(userPreferencesBytes)
 	}
-	
+
 	err = s.cassandraSession.Query(`
 		UPDATE users
 		SET language_code = ?, language_name = ?, region_code = ?, timezone = ?, user_preferences = ?
@@ -477,7 +490,7 @@ func (s *AuthService) GetLatestOTP(phoneOrEmail, purpose string) (*models.OTPDat
 func (s *AuthService) ResendOTP(mobileNo string) (int, error) {
 	// Generate new OTP
 	otp := s.GenerateOTP()
-	
+
 	// Store new OTP in database
 	otpExpiry := time.Now().Add(10 * time.Minute) // OTP expires in 10 minutes
 	err := s.cassandraSession.Query(`
@@ -495,11 +508,11 @@ func (s *AuthService) ResendOTP(mobileNo string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to store new OTP: %v", err)
 	}
-	
+
 	return otp, nil
 }
 
 // GetCassandraSession returns the Cassandra session for external access
 func (s *AuthService) GetCassandraSession() *gocql.Session {
 	return s.cassandraSession
-} 
+}

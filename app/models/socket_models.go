@@ -27,6 +27,7 @@ type LoginRequest struct {
 	MobileNo string `json:"mobile_no"`
 	DeviceID string `json:"device_id"`
 	FCMToken string `json:"fcm_token"`
+	SocketID string `json:"socket_id"`
 	Email    string `json:"email,omitempty"`
 }
 
@@ -500,4 +501,21 @@ type ResendOTPResponse struct {
 	Timestamp    string `json:"timestamp"`
 	SocketID     string `json:"socket_id"`
 	Event        string `json:"event"`
+}
+
+// LeagueJoin represents league join/match details
+type LeagueJoin struct {
+	UserID           string    `json:"user_id"`
+	StatusID         string    `json:"status_id"`
+	JoinMonth        string    `json:"join_month"`
+	JoinedAt         time.Time `json:"joined_at"`
+	LeagueID         string    `json:"league_id"`
+	Status           string    `json:"status"`
+	ExtraData        string    `json:"extra_data"`
+	ID               string    `json:"id"`
+	InviteCode       string    `json:"invite_code"`
+	OpponentLeagueID string    `json:"opponent_league_id"`
+	OpponentUserID   string    `json:"opponent_user_id"`
+	Role             string    `json:"role"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }

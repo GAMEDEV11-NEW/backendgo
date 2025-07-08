@@ -23,7 +23,7 @@ func NewAuthSocketHandler(socketService *services.SocketService) *AuthSocketHand
 }
 
 // SetupAuthHandlers configures all authentication-related Socket.IO event handlers
-func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket) {
+func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc func(socket *socketio.Socket, eventName string) (*models.User, error)) {
 	// Device info handler
 	socket.On("device:info", func(event *socketio.EventPayload) {
 		if len(event.Data) == 0 {
@@ -114,6 +114,9 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket) {
 			socket.Emit("connection_error", errorResp)
 			return
 		}
+
+		// Inject socket_id into the login data
+		loginData["socket_id"] = socket.Id
 
 		// Convert to LoginRequest struct
 		loginJSON, _ := json.Marshal(loginData)
@@ -231,6 +234,26 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket) {
 
 	// Set profile handler
 	socket.On("set:profile", func(event *socketio.EventPayload) {
+		// Authenticate user
+		_, err := authFunc(socket, "set:profile")
+		if err != nil {
+			if authErr, ok := err.(*AuthenticationError); ok {
+				socket.Emit("authentication_error", authErr.ConnectionError)
+			} else {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidSession,
+					ErrorType: models.ErrorTypeAuthentication,
+					Field:     "authentication",
+					Message:   err.Error(),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+			}
+			return
+		}
+
 		if len(event.Data) == 0 {
 			errorResp := models.ConnectionError{
 				Status:    "error",
@@ -303,8 +326,191 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket) {
 		socket.Emit("profile:set", response)
 	})
 
+	// Restore session handler (for reconnections)
+	socket.On("restore:session", func(event *socketio.EventPayload) {
+		if len(event.Data) == 0 {
+			errorResp := models.ConnectionError{
+				Status:    "error",
+				ErrorCode: models.ErrorCodeMissingField,
+				ErrorType: models.ErrorTypeField,
+				Field:     "session_data",
+				Message:   "No session data provided",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				SocketID:  socket.Id,
+				Event:     "connection_error",
+			}
+			socket.Emit("connection_error", errorResp)
+			return
+		}
+
+		// Parse session restoration request
+		sessionData, ok := event.Data[0].(map[string]interface{})
+		if !ok {
+			errorResp := models.ConnectionError{
+				Status:    "error",
+				ErrorCode: models.ErrorCodeInvalidFormat,
+				ErrorType: models.ErrorTypeFormat,
+				Field:     "session_data",
+				Message:   "Invalid session data format",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				SocketID:  socket.Id,
+				Event:     "connection_error",
+			}
+			socket.Emit("connection_error", errorResp)
+			return
+		}
+
+		sessionToken, ok := sessionData["session_token"].(string)
+		if !ok || sessionToken == "" {
+			errorResp := models.ConnectionError{
+				Status:    "error",
+				ErrorCode: models.ErrorCodeMissingField,
+				ErrorType: models.ErrorTypeField,
+				Field:     "session_token",
+				Message:   "Session token is required",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				SocketID:  socket.Id,
+				Event:     "connection_error",
+			}
+			socket.Emit("connection_error", errorResp)
+			return
+		}
+
+		// Try to restore session
+		err := h.socketService.GetSessionService().UpdateSessionSocketID(sessionToken, socket.Id)
+		if err != nil {
+			errorResp := models.ConnectionError{
+				Status:    "error",
+				ErrorCode: models.ErrorCodeInvalidSession,
+				ErrorType: models.ErrorTypeAuthentication,
+				Field:     "session",
+				Message:   "Session not found or expired",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				SocketID:  socket.Id,
+				Event:     "connection_error",
+			}
+			socket.Emit("connection_error", errorResp)
+			return
+		}
+
+		// Get session data to return user info
+		sessionInfo, err := h.socketService.GetSessionService().GetSession(sessionToken)
+		if err != nil {
+			errorResp := models.ConnectionError{
+				Status:    "error",
+				ErrorCode: models.ErrorCodeInvalidSession,
+				ErrorType: models.ErrorTypeAuthentication,
+				Field:     "session",
+				Message:   "Failed to retrieve session data",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				SocketID:  socket.Id,
+				Event:     "connection_error",
+			}
+			socket.Emit("connection_error", errorResp)
+			return
+		}
+
+		// Send success response
+		response := map[string]interface{}{
+			"status":        "success",
+			"message":       "Session restored successfully",
+			"mobile_no":     sessionInfo.MobileNo,
+			"session_token": sessionToken,
+			"socket_id":     socket.Id,
+			"timestamp":     time.Now().UTC().Format(time.RFC3339),
+			"event":         "session:restored",
+		}
+		socket.Emit("session:restored", response)
+	})
+
+	// Logout handler (clears session completely)
+	socket.On("logout", func(event *socketio.EventPayload) {
+		// Authenticate user first
+		_, err := authFunc(socket, "logout")
+		if err != nil {
+			if authErr, ok := err.(*AuthenticationError); ok {
+				socket.Emit("authentication_error", authErr.ConnectionError)
+			} else {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidSession,
+					ErrorType: models.ErrorTypeAuthentication,
+					Field:     "authentication",
+					Message:   err.Error(),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+			}
+			return
+		}
+
+		// Get session data to clear it
+		sessionData, err := h.socketService.GetSessionService().GetSessionBySocket(socket.Id)
+		if err != nil {
+			errorResp := models.ConnectionError{
+				Status:    "error",
+				ErrorCode: models.ErrorCodeInvalidSession,
+				ErrorType: models.ErrorTypeAuthentication,
+				Field:     "session",
+				Message:   "Session not found",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				SocketID:  socket.Id,
+				Event:     "connection_error",
+			}
+			socket.Emit("connection_error", errorResp)
+			return
+		}
+
+		// Clear session completely
+		err = h.socketService.GetSessionService().DeleteSession(sessionData.SessionToken)
+		if err != nil {
+			errorResp := models.ConnectionError{
+				Status:    "error",
+				ErrorCode: models.ErrorCodeInvalidSession,
+				ErrorType: models.ErrorTypeAuthentication,
+				Field:     "session",
+				Message:   "Failed to logout",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				SocketID:  socket.Id,
+				Event:     "connection_error",
+			}
+			socket.Emit("connection_error", errorResp)
+			return
+		}
+
+		// Send logout success response
+		response := map[string]interface{}{
+			"status":    "success",
+			"message":   "Logged out successfully",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"event":     "logout:success",
+		}
+		socket.Emit("logout:success", response)
+	})
+
 	// Set language handler
 	socket.On("set:language", func(event *socketio.EventPayload) {
+		// Authenticate user
+		_, err := authFunc(socket, "set:language")
+		if err != nil {
+			if authErr, ok := err.(*AuthenticationError); ok {
+				socket.Emit("authentication_error", authErr.ConnectionError)
+			} else {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidSession,
+					ErrorType: models.ErrorTypeAuthentication,
+					Field:     "authentication",
+					Message:   err.Error(),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+			}
+			return
+		}
+
 		if len(event.Data) == 0 {
 			errorResp := models.ConnectionError{
 				Status:    "error",
@@ -376,4 +582,5 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket) {
 		response.SocketID = socket.Id
 		socket.Emit("language:set", response)
 	})
-} 
+
+}

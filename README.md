@@ -384,6 +384,141 @@ socket.emit('heartbeat');
 socket.disconnect();
 ```
 
+### Contest Matchmaking & Opponent Check
+
+#### Join Contest
+```javascript
+socket.emit('contest:join', {
+  mobile_no: '...',
+  fcm_token: '...',
+  jwt_token: '...',
+  device_id: '...',
+  contest_id: '...',
+  team_name: '...', // optional
+  team_size: 1      // optional
+});
+```
+
+**Server Response:**
+```json
+{
+  "status": "success",
+  "message": "Successfully joined contest",
+  "mobile_no": "...",
+  "device_id": "...",
+  "contest_id": "...",
+  "team_id": "...",
+  "join_time": "2024-01-15T10:30:00Z",
+  "data": { ... },
+  "timestamp": "2024-01-15T10:30:00Z",
+  "event": "contest:join:response"
+}
+```
+
+#### Match Found (Second Emit)
+If a match is found for the joining user, the server emits:
+```json
+{
+  "opponent_user_id": "...",
+  "opponent_league_id": "...",
+  "status": "success",
+  "event": "match:found"
+}
+```
+- Only the user who just joined receives this event.
+- Both users' records in the database are updated with opponent info.
+
+#### Check Opponent
+A user can check if their opponent has been found:
+```javascript
+socket.emit('check:opponent', {
+  user_id: '...',      // your user ID (mobile_no or internal ID)
+  contest_id: '...'
+});
+```
+
+**Server Response:**
+- If opponent found:
+```json
+{
+  "status": "success",
+  "opponent_user_id": "...",
+  "opponent_league_id": "..."
+}
+```
+- If not found yet:
+```json
+{
+  "status": "pending",
+  "message": "No opponent found yet"
+}
+```
+- On error (missing fields, etc):
+```json
+{
+  "status": "error",
+  "error_code": "missing_field",
+  "error_type": "field",
+  "field": "user_id",
+  "message": "user_id is required and must be a string"
+}
+```
+
+**Notes:**
+- Only the requesting user receives the response.
+- The check:opponent event is idempotent and safe to call repeatedly.
+
+## Cancel Matchmaking (`cancel:find`)
+
+### Description
+Allows a user to cancel the matchmaking process. This will stop the current opponent-finding process and set the user's status to `status_id = 4` in both `league_joins` and `pending_league_joins` tables.
+
+### Event Name
+`cancel:find`
+
+### Request Payload
+Send as the first argument to the event:
+```json
+{
+  "user_id": "<user_id>",         // string, required (the user's internal ID)
+  "contest_id": "<contest_id>",   // string, required (the contest/league ID)
+  "jwt_token": "<jwt_token>"      // string, required (for authentication)
+}
+```
+
+### Example (JavaScript client)
+```js
+socket.emit('cancel:find', {
+  user_id: 'cb68a808-948f-4c6e-9765-5d6792e33263',
+  contest_id: '1',
+  jwt_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+});
+```
+
+### Response
+The server will emit a response to the same socket:
+
+#### On Success
+```json
+{
+  "status": "success",
+  "message": "Matchmaking cancelled"
+}
+```
+
+#### On Error (missing fields, auth failure, etc)
+```json
+{
+  "status": "error",
+  "message": "<error message>"
+}
+```
+
+### Notes
+- The `jwt_token` must be valid and match the `user_id`.
+- The `contest_id` must be the contest/league the user is currently searching in.
+- After this call, the user's status will be set to `4` (cancelled) in both relevant tables, and they will not be matched with an opponent until they rejoin.
+
 ## 🗄️ Database Schema
 
 ### Cassandra Tables
@@ -443,34 +578,90 @@ CREATE TABLE otps (
 
 ## 🔐 Authentication Flow
 
-### 1. User Registration/Login
-```
-Client → Socket.IO Login Event → Server
-Server → Generate OTP → Store in Cassandra
-Server → Send OTP Response → Client
+This backend implements a secure, multi-step authentication system for real-time gaming:
+
+**1. Device Info:**  
+Client sends device information (no authentication required).
+
+**2. Login:**  
+Client sends mobile number, device ID, and FCM token.  
+- FCM token must be at least 100 characters.
+- Session is created in Redis (primary) and Cassandra (backup).
+- OTP is generated and sent.
+
+**3. OTP Verification:**  
+Client submits OTP and session token.  
+- If valid, user status is updated and a JWT token is generated (includes FCM token).
+- Session is updated with JWT.
+
+**4. Profile Setup & Language:**  
+Client sets up profile and language (requires authentication).
+
+**5. Protected Events:**  
+All further events (e.g., `main:screen`, contest join) require:
+- Valid session token
+- Valid JWT token (with matching FCM token)
+- FCM token in request must match the one in the JWT and session
+
+**6. Session Management:**  
+- **Disconnect**: Session remains active, only socket mapping is removed
+- **Reconnect**: Use `restore:session` to reconnect with existing session
+- **Logout**: Use `logout` to completely clear session
+- Sessions are stored in Redis for fast access and Cassandra for backup
+
+**7. Security Features:**  
+- OTP and JWT authentication
+- FCM token length and value validation
+- Device ID binding
+- Session expiration and cleanup
+- Centralized error handling
+
+**Example Client Flow:**
+```js
+// 1. Connect and send device info
+socket.emit('device:info', { device_id: 'device123', device_type: 'mobile' });
+
+// 2. Login
+socket.emit('login', {
+  mobile_no: '1234567890',
+  device_id: 'device123',
+  fcm_token: 'fcm_token_that_is_at_least_100_characters_long_...'
+});
+
+// 3. Receive OTP, then verify
+socket.emit('verify:otp', {
+  mobile_no: '1234567890',
+  session_token: 'SESSION_TOKEN_FROM_LOGIN',
+  otp: '123456'
+});
+
+// 4. Set profile/language (now authenticated)
+socket.emit('set:profile', { ... });
+socket.emit('set:language', { ... });
+
+// 5. Access protected events
+socket.emit('main:screen', {
+  mobile_no: '1234567890',
+  session_token: 'SESSION_TOKEN',
+  jwt_token: 'JWT_TOKEN',
+  device_id: 'device123',
+  fcm_token: 'fcm_token_that_is_at_least_100_characters_long_...',
+  message_type: 'game_list'
+});
+
+// 6. Session restoration (after disconnect/reconnect)
+socket.emit('restore:session', {
+  session_token: 'SESSION_TOKEN'
+});
+
+// 7. Logout (clears session completely)
+socket.emit('logout');
 ```
 
-### 2. OTP Verification
-```
-Client → Socket.IO Verify OTP Event → Server
-Server → Validate OTP → Generate JWT
-Server → Create Session → Store in Cassandra
-Server → Send JWT Response → Client
-```
-
-### 3. Profile Setup
-```
-Client → Socket.IO Set Profile Event → Server
-Server → Update User Profile → Store in Cassandra
-Server → Send Profile Response → Client
-```
-
-### 4. Session Management
-```
-Client → Include JWT in Requests → Server
-Server → Validate JWT → Check Session
-Server → Process Request → Send Response
-```
+**Validation Rules:**
+- FCM token must be ≥ 100 characters and match across login, JWT, and all requests.
+- JWT token is required for all protected events.
+- Session and JWT are checked in Redis (primary) and Cassandra (backup).
 
 ## ⚡ Real-time Features
 
