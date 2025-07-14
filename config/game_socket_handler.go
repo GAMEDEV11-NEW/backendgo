@@ -5,7 +5,7 @@ import (
 	"gofiber/app/models"
 	"gofiber/app/services"
 	"gofiber/app/utils"
-	"log"
+	"strings"
 	"time"
 
 	socketio "github.com/doquangtan/socket.io/v4"
@@ -181,7 +181,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 
 	// Game list update trigger handler - fetches from Redis and broadcasts to all connected clients
 	socket.On("trigger_game_list_update", func(event *socketio.EventPayload) {
-		log.Printf("🎮 Game list update trigger received from %s", socket.Id)
 
 		// Authenticate user
 		_, err := authFunc(socket, "trigger_game_list_update")
@@ -206,18 +205,15 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		// Fetch latest game list data from Redis
 		gameListData, err := h.socketService.GetGameListFromRedis()
 		if err != nil {
-			log.Printf("❌ Failed to fetch game list from Redis: %v", err)
 			// Fallback to generating fresh data
 			gameListData = h.socketService.GetGameListDataPublic()
 		} else {
-			log.Printf("📖 Successfully fetched game list from Redis")
 		}
 
 		// Broadcast the updated game list to all connected clients via main:screen:game:list
 		// This follows the same pattern as socket.Emit("main:screen:game:list", response.Data)
 		socket.Emit("main:screen:game:list", gameListData)
 
-		log.Printf("📡 Game list update broadcasted to all connected clients via main:screen:game:list")
 	})
 
 	// Contest list handler
@@ -376,7 +372,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 
 	// Contest price gap handler
 	socket.On("list:contest:gap", func(event *socketio.EventPayload) {
-		log.Printf("💰 Contest price gap request received from %s", socket.Id)
 
 		// Authenticate user
 		_, err := authFunc(socket, "list:contest:gap")
@@ -530,9 +525,8 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		socket.Emit("list:contest:gap:response", response)
 	})
 
-	// Contest join handler
+	// Contest join handler - Simplified version (only join, no matchmaking)
 	socket.On("contest:join", func(event *socketio.EventPayload) {
-		log.Printf("🏆 Contest join request received from %s", socket.Id)
 
 		// Authenticate user
 		_, err := authFunc(socket, "contest:join")
@@ -680,7 +674,7 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 
-		// Process contest join request
+		// Process contest join request (only join, no matchmaking)
 		response, err := h.socketService.HandleContestJoin(joinReq)
 		if err != nil {
 			errorResp := models.ConnectionError{
@@ -697,36 +691,7 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 
-		// Get user_id from response for matchmaking
-		currentUserID := ""
-		if response != nil && response.Data != nil {
-			if id, ok := response.Data["user_id"].(string); ok {
-				currentUserID = id
-			}
-		}
-		leagueID := joinReq.ContestID
-		entry, err := h.socketService.GetLeagueJoinEntry(currentUserID, leagueID)
-		if err == nil && entry != nil {
-			currentJoinedAt := entry.JoinedAt
-			opponent, err := h.socketService.MatchAndUpdateOpponent(currentUserID, leagueID, currentJoinedAt)
-			if err != nil {
-				log.Printf("❌ MatchAndUpdateOpponent error: %v", err)
-			} else if opponent != nil {
-				if response != nil && response.Data != nil {
-					response.Data["opponent"] = map[string]interface{}{
-						"opponent_user_id":   opponent.UserID,
-						"opponent_league_id": opponent.LeagueID,
-					}
-				} else {
-					log.Printf("⚠️ Response or response.Data is nil, cannot add opponent data")
-				}
-			} else {
-				log.Printf("⏳ No opponent found for matching")
-			}
-		} else {
-			log.Printf("⚠️ Missing required fields for opponent matching - currentUserID: %s, leagueID: %s", currentUserID, leagueID)
-		}
-		log.Printf("🏆 Contest join response: %+v", response)
+		// Send simple join response without matchmaking
 		socket.Emit("contest:join:response", response)
 	})
 
@@ -873,8 +838,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-		log.Printf("🗄️ Fetching league join entry for userID: %s, contestID: %s", userID, contestID)
-		log.Printf("🔍 About to call GetLeagueJoinEntry with userID=%s, contestID=%s", userID, contestID)
 		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID)
 		if err != nil {
 			socket.Emit("opponent:response", map[string]interface{}{
@@ -888,13 +851,53 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		}
 
 		if entry.OpponentUserID != "" && entry.OpponentUserID != "NULL" {
-			log.Printf("🔍 OpponentUserID: %s", entry.OpponentUserID)
-			log.Printf("✅ Opponent found - sending success response")
+
+			// Get user pieces for this game using match_pairs ID
+			var userPieces []map[string]interface{}
+			var opponentPieces []map[string]interface{}
+
+			// Get match_pairs ID to use as game_id
+			matchPairID, err := h.socketService.GetMatchPairID(userID, entry.OpponentUserID, contestID)
+			if err != nil {
+				// No match found, pieces will be created when matched
+				userPieces = []map[string]interface{}{}
+				opponentPieces = []map[string]interface{}{}
+			} else {
+				// Use match_pairs ID as game_id from game_pieces table
+				gameID := matchPairID.String()
+
+				gamePiecesService := services.NewGamePiecesService(h.socketService.GetCassandraSession())
+
+				// Get current user's pieces and enhance them with comprehensive data
+				userPieces, err = gamePiecesService.GetUserPiecesCurrentState(gameID, userID)
+				if err != nil {
+					// Continue without pieces if there's an error
+					userPieces = []map[string]interface{}{}
+				} else {
+					// Enhance pieces with comprehensive data structure
+					userPieces = h.enhancePiecesWithComprehensiveData(userPieces, gameID, userID)
+				}
+
+				// Get opponent's pieces and enhance them with comprehensive data
+				opponentPieces, err = gamePiecesService.GetUserPiecesCurrentState(gameID, entry.OpponentUserID)
+				if err != nil {
+					// Continue without pieces if there's an error
+					opponentPieces = []map[string]interface{}{}
+				} else {
+					// Enhance pieces with comprehensive data structure
+					opponentPieces = h.enhancePiecesWithComprehensiveData(opponentPieces, gameID, entry.OpponentUserID)
+				}
+			}
+
 			response := map[string]interface{}{
 				"status":             "success",
+				"user_id":            userID,
 				"opponent_user_id":   entry.OpponentUserID,
 				"opponent_league_id": entry.OpponentLeagueID,
 				"joined_at":          entry.JoinedAt.Format(time.RFC3339),
+				"user_pieces":        userPieces,
+				"opponent_pieces":    opponentPieces,
+				"pieces_status":      "active", // Indicates pieces are available
 			}
 			socket.Emit("opponent:response", response)
 		} else {
@@ -906,6 +909,150 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			}
 			socket.Emit("opponent:response", response)
 		}
+	})
+
+	// Get opponent info during active gameplay
+	socket.On("get:opponent:info", func(event *socketio.EventPayload) {
+		// Authenticate user
+		_, err := authFunc(socket, "get:opponent:info")
+		if err != nil {
+			if authErr, ok := err.(*AuthenticationError); ok {
+				socket.Emit("authentication_error", authErr.ConnectionError)
+			} else {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidSession,
+					ErrorType: models.ErrorTypeAuthentication,
+					Field:     "authentication",
+					Message:   err.Error(),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+			}
+			return
+		}
+
+		if len(event.Data) == 0 {
+			socket.Emit("opponent:info:response", map[string]interface{}{
+				"status":     "error",
+				"error_code": "missing_field",
+				"error_type": "field",
+				"field":      "request_data",
+				"message":    "No data provided",
+			})
+			return
+		}
+
+		reqData, ok := event.Data[0].(map[string]interface{})
+		if !ok {
+			socket.Emit("opponent:info:response", map[string]interface{}{
+				"status":     "error",
+				"error_code": "invalid_format",
+				"error_type": "format",
+				"field":      "request_data",
+				"message":    "Invalid data format",
+			})
+			return
+		}
+
+		userID, userOk := reqData["user_id"].(string)
+		contestID, contestOk := reqData["contest_id"].(string)
+		gameID, gameOk := reqData["game_id"].(string)
+
+		if !userOk || userID == "" {
+			socket.Emit("opponent:info:response", map[string]interface{}{
+				"status":     "error",
+				"error_code": "missing_field",
+				"error_type": "field",
+				"field":      "user_id",
+				"message":    "user_id is required",
+			})
+			return
+		}
+
+		if !contestOk || contestID == "" {
+			socket.Emit("opponent:info:response", map[string]interface{}{
+				"status":     "error",
+				"error_code": "missing_field",
+				"error_type": "field",
+				"field":      "contest_id",
+				"message":    "contest_id is required",
+			})
+			return
+		}
+
+		if !gameOk || gameID == "" {
+			socket.Emit("opponent:info:response", map[string]interface{}{
+				"status":     "error",
+				"error_code": "missing_field",
+				"error_type": "field",
+				"field":      "game_id",
+				"message":    "game_id is required",
+			})
+			return
+		}
+
+		// Get league join entry to find opponent
+		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID)
+		if err != nil {
+			socket.Emit("opponent:info:response", map[string]interface{}{
+				"status":     "error",
+				"error_code": "not_found",
+				"error_type": "database",
+				"field":      "league_joins",
+				"message":    "Could not fetch entry",
+			})
+			return
+		}
+
+		if entry.OpponentUserID == "" || entry.OpponentUserID == "NULL" {
+			socket.Emit("opponent:info:response", map[string]interface{}{
+				"status":  "error",
+				"message": "No opponent found for this game",
+			})
+			return
+		}
+
+		// Get opponent user details
+		var opponentUser models.User
+		err = h.socketService.GetCassandraSession().Query(`
+			SELECT id, mobile_no, full_name, status, language_code
+			FROM users
+			WHERE id = ?
+		`, entry.OpponentUserID).Scan(&opponentUser.ID, &opponentUser.MobileNo, &opponentUser.FullName, &opponentUser.Status, &opponentUser.LanguageCode)
+
+		if err != nil {
+			socket.Emit("opponent:info:response", map[string]interface{}{
+				"status":     "error",
+				"error_code": "not_found",
+				"error_type": "database",
+				"field":      "opponent_user",
+				"message":    "Opponent user not found",
+			})
+			return
+		}
+
+		// Get opponent's pieces for this game
+		gamePiecesService := services.NewGamePiecesService(h.socketService.GetCassandraSession())
+		opponentPieces, err := gamePiecesService.GetUserPiecesCurrentState(gameID, entry.OpponentUserID)
+		if err != nil {
+			opponentPieces = []map[string]interface{}{}
+		}
+
+		response := map[string]interface{}{
+			"status":             "success",
+			"opponent_user_id":   entry.OpponentUserID,
+			"opponent_league_id": entry.OpponentLeagueID,
+			"opponent_name":      opponentUser.FullName,
+			"opponent_mobile":    opponentUser.MobileNo,
+			"game_id":            gameID,
+			"contest_id":         contestID,
+			"opponent_pieces":    opponentPieces,
+			"joined_at":          entry.JoinedAt.Format(time.RFC3339),
+		}
+
+		socket.Emit("opponent:info:response", response)
 	})
 
 	socket.On("cancel:find", func(event *socketio.EventPayload) {
@@ -947,7 +1094,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		userID, userOk := reqData["user_id"].(string)
 		contestID, contestOk := reqData["contest_id"].(string)
 		jwtToken, jwtOk := reqData["jwt_token"].(string)
-		log.Printf("🔍 userID: %s, contestID: %s, jwtToken: %s", userID, contestID, jwtToken)
 		if !userOk || userID == "" {
 			socket.Emit("cancel:find:response", map[string]interface{}{
 				"status":  "error",
@@ -1001,7 +1147,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-		log.Printf("🔍 entry: %+v", entry)
 		// Update status_id to '4' in both tables
 		err = h.socketService.UpdateLeagueJoinStatusBoth(userID, contestID, "4", entry.JoinedAt.Format(time.RFC3339))
 		if err != nil {
@@ -1016,4 +1161,88 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			"message": "Matchmaking cancelled",
 		})
 	})
+
+}
+
+// enhancePiecesWithComprehensiveData enhances basic piece data with comprehensive structure
+func (h *GameSocketHandler) enhancePiecesWithComprehensiveData(pieces []map[string]interface{}, gameID, userID string) []map[string]interface{} {
+	enhancedPieces := make([]map[string]interface{}, 0, len(pieces))
+
+	for _, piece := range pieces {
+		pieceID, _ := piece["piece_id"].(string)
+		pieceType, _ := piece["piece_type"].(string)
+		toPosLast, _ := piece["to_pos_last"].(string)
+
+		// Create comprehensive current state
+		currentState := map[string]interface{}{
+			"position":                toPosLast,
+			"position_number":         h.parsePositionNumber(toPosLast),
+			"status":                  "active",
+			"moves":                   0, // Initial state
+			"total_positions_visited": []string{h.parsePositionNumber(toPosLast)},
+		}
+
+		// Create initial move history
+		moveHistory := []map[string]interface{}{
+			{
+				"move_number":     0,
+				"from_pos":        "initial",
+				"to_pos":          toPosLast,
+				"position_number": h.parsePositionNumber(toPosLast),
+				"timestamp":       time.Now().UTC().Format(time.RFC3339),
+			},
+		}
+
+		// Create piece metadata
+		pieceMetadata := map[string]interface{}{
+			"created_by":              userID,
+			"game_type":               "standard",
+			"piece_value":             1,
+			"current_position_number": h.parsePositionNumber(toPosLast),
+			"total_positions":         57,
+		}
+
+		// Create enhanced piece with comprehensive data
+		enhancedPiece := map[string]interface{}{
+			"game_id":        piece["game_id"],
+			"user_id":        piece["user_id"],
+			"move_number":    piece["move_number"],
+			"piece_id":       pieceID,
+			"player_id":      piece["player_id"],
+			"from_pos_last":  piece["from_pos_last"],
+			"to_pos_last":    toPosLast,
+			"piece_type":     pieceType,
+			"captured_piece": piece["captured_piece"],
+			"created_at":     piece["created_at"],
+			"updated_at":     piece["updated_at"],
+			"current_state":  currentState,
+			"move_history":   moveHistory,
+			"piece_metadata": pieceMetadata,
+			"total_moves":    0,
+			"last_position":  toPosLast,
+			"last_move_time": time.Now().UTC().Format(time.RFC3339),
+		}
+
+		enhancedPieces = append(enhancedPieces, enhancedPiece)
+	}
+
+	return enhancedPieces
+}
+
+// parsePositionNumber extracts position number from position string
+func (h *GameSocketHandler) parsePositionNumber(position string) string {
+	if position == "initial" || position == "" {
+		return "0"
+	}
+
+	// If position contains "total", extract the number
+	if strings.Contains(position, "total") {
+		parts := strings.Fields(position)
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+	}
+
+	// Otherwise, return the position as is
+	return position
 }

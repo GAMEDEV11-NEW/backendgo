@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"gofiber/app/models"
 	"gofiber/redis"
-	"log"
 	"math/rand"
 	"time"
 
@@ -32,56 +31,42 @@ func NewDiceService(cassandraSession *gocql.Session) *DiceService {
 // RollDice generates a random dice number and stores it in the database
 func (s *DiceService) RollDice(rollReq models.DiceRollRequest, userID string) (*models.DiceRollResponse, error) {
 	// Validate session from Redis
-	log.Printf("🔍 DEBUG: Checking session in Redis for token=%s, userID=%s", rollReq.SessionToken, userID)
 
 	// Get session from Redis
 	sessionData, err := s.redisService.GetSession(rollReq.SessionToken)
 	if err != nil {
-		log.Printf("❌ DEBUG: Session not found in Redis: %v", err)
 		return nil, fmt.Errorf("invalid or expired session")
 	}
-
-	log.Printf("✅ DEBUG: Session found in Redis: %+v", sessionData)
 
 	// Extract session information
 	deviceID, ok := sessionData["device_id"].(string)
 	if !ok {
-		log.Printf("❌ DEBUG: Device ID not found in Redis data")
 		return nil, fmt.Errorf("invalid session data")
 	}
 
 	// Check if session is active
 	isActive, ok := sessionData["is_active"].(bool)
 	if !ok || !isActive {
-		log.Printf("❌ DEBUG: Session is not active")
 		return nil, fmt.Errorf("session is not active")
 	}
 
 	// Check if session is expired
 	expiresAtStr, ok := sessionData["expires_at"].(string)
 	if !ok {
-		log.Printf("❌ DEBUG: Expires at not found in Redis data")
 		return nil, fmt.Errorf("invalid session data")
 	}
 
 	expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
 	if err != nil {
-		log.Printf("❌ DEBUG: Failed to parse expires_at: %v", err)
 		return nil, fmt.Errorf("invalid session data")
 	}
 
 	if time.Now().After(expiresAt) {
-		log.Printf("❌ DEBUG: Session is expired. Expires at: %s, Current time: %s",
-			expiresAt.Format(time.RFC3339), time.Now().Format(time.RFC3339))
 		return nil, fmt.Errorf("session is expired")
 	}
 
-	log.Printf("✅ DEBUG: Session validation successful")
-	log.Printf("🔍 DEBUG: Device ID comparison - Request: %s, Session: %s", rollReq.DeviceID, deviceID)
-
 	// Validate device ID
 	if deviceID != rollReq.DeviceID {
-		log.Printf("❌ DEBUG: Device ID mismatch. Expected: %s, Got: %s", deviceID, rollReq.DeviceID)
 		return nil, fmt.Errorf("device ID mismatch")
 	}
 
@@ -97,12 +82,8 @@ func (s *DiceService) RollDice(rollReq models.DiceRollRequest, userID string) (*
 		lookupDiceID = gocql.TimeUUID()
 		err = s.cassandraSession.Query(`INSERT INTO dice_rolls_lookup (game_id, user_id, dice_id, created_at) VALUES (?, ?, ?, ?)`, rollReq.GameID, userID, lookupDiceID, time.Now().UTC()).Exec()
 		if err != nil {
-			log.Printf("❌ Error creating dice_rolls_lookup: %v", err)
 			return nil, fmt.Errorf("failed to create dice_rolls_lookup: %v", err)
 		}
-		log.Printf("✅ DEBUG: Created new lookup_dice_id: %s for game_id: %s, user_id: %s", lookupDiceID.String(), rollReq.GameID, userID)
-	} else {
-		log.Printf("✅ DEBUG: Reusing existing lookup_dice_id: %s for game_id: %s, user_id: %s", lookupDiceID.String(), rollReq.GameID, userID)
 	}
 
 	// 2. Generate a new roll_id for this roll
@@ -116,12 +97,8 @@ func (s *DiceService) RollDice(rollReq models.DiceRollRequest, userID string) (*
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`).Bind(lookupDiceID, rollID, diceNumber, rollTime, rollReq.SessionToken, rollReq.DeviceID, rollReq.ContestID, createdAt).Exec()
 	if err != nil {
-		log.Printf("❌ Error storing dice roll: %v", err)
 		return nil, fmt.Errorf("failed to store dice roll: %v", err)
 	}
-
-	log.Printf("🎲 Dice roll stored - LookupDiceID: %s, RollID: %s, Number: %d", lookupDiceID.String(), rollID.String(), diceNumber)
-	log.Printf("📊 DEBUG: This ensures single dice_id per user/game, multiple rolls stored under same lookup_dice_id")
 
 	// Prepare response data
 	responseData := map[string]interface{}{

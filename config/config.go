@@ -2,7 +2,6 @@
 package config
 
 import (
-	"log"
 	"os"
 	"strconv"
 
@@ -34,7 +33,6 @@ var (
 func init() {
 	// Load .env file
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables.")
 	}
 
 	// Cassandra configuration
@@ -68,10 +66,6 @@ func init() {
 		RedisDB = 0
 	}
 
-	log.Printf("✅ Configuration loaded successfully")
-	log.Printf("📊 Cassandra: %s:%d/%s", CassandraHost, CassandraPort, CassandraKeyspace)
-	log.Printf("🔴 Redis: %s", RedisURL)
-	log.Printf("🚀 Server Port: %d", ServerPort)
 }
 
 // getEnv gets environment variable with fallback default value

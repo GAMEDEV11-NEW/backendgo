@@ -1,0 +1,314 @@
+
+Authentication Process Flow
+
+
+User Login Request
+       ↓
+   Socket.IO Connect
+       ↓
+   Emit 'login' Event
+       ↓
+   AuthService.HandleLogin()
+       ↓
+   Validate Mobile Number (10 digits only)
+       ↓
+   Check User in Cassandra
+       ↓
+   User Exists?
+       ↓
+   YES → Get User Data
+       ↓
+   NO → Create New User (UUID)
+       ↓
+   Generate 6-digit OTP
+       ↓
+   Store OTP in Cassandra (plain text)
+       ↓
+   Create Session Token (UUID)
+       ↓
+   Store Session in Redis + Cassandra
+       ↓
+   Deactivate Previous Sessions
+       ↓
+   Return Session Token + OTP
+       ↓
+   Client Receives OTP
+       ↓
+   User Enters OTP
+       ↓
+   Emit 'verify_otp' Event
+       ↓
+   AuthService.HandleOTPVerification()
+       ↓
+   Validate Session Token
+       ↓
+   Check OTP in Cassandra
+       ↓
+   OTP Valid?
+       ↓
+   YES → Mark OTP as Verified
+       ↓
+   Generate JWT Token
+       ↓
+   Update Session with JWT
+       ↓
+   Return Authentication Success
+       ↓
+   User Logged In ✅
+
+
+=================================================================
+OTP Verification Process Flow
+
+User Enters OTP
+       ↓
+   Emit 'verify_otp' Event
+       ↓
+   AuthService.HandleOTPVerification()
+       ↓
+   Validate Session Token
+       ↓
+   Get Session from Redis/Cassandra
+       ↓
+   Session Valid?
+       ↓
+   YES → Check OTP in Database
+       ↓
+   NO → Return Session Error
+       ↓
+   Query otp_store Table
+       ↓
+   OTP Found?
+       ↓
+   YES → Check OTP Expiry
+       ↓
+   NO → Return OTP Not Found
+       ↓
+   OTP Expired?
+       ↓
+   YES → Return Expired Error
+       ↓
+   NO → Check Attempt Count
+       ↓
+   Attempts >= 3?
+       ↓
+   YES → Return Max Attempts Error
+       ↓
+   NO → Verify OTP
+       ↓
+   OTP Matches?
+       ↓
+   YES → Mark as Verified
+       ↓
+   Generate JWT Token
+       ↓
+   Update Session
+       ↓
+   Return Success
+       ↓
+   NO → Increment Attempt Count
+       ↓
+   Return Invalid OTP Error
+
+=====================================================================
+Session Management Process Flow
+
+User Login
+       ↓
+   Generate Session Token (UUID)
+       ↓
+   Store in Redis (Primary)
+       ↓
+   Store in Cassandra (Backup)
+       ↓
+   Single Session Enforcement
+       ↓
+   Deactivate Previous Sessions
+       ↓
+   Update sessions Table
+       ↓
+   Set Session Expiry (24 hours)
+       ↓
+   Monitor Activity
+       ↓
+   Heartbeat Check
+       ↓
+   Session Expired?
+       ↓
+   YES → Cleanup Session
+       ↓
+   Remove from Redis
+       ↓
+   Update Cassandra
+       ↓
+   NO → Continue Active
+
+
+
+=====================================================================================================================================
+Contest Matchmaking Process Flow
+
+User Joins Contest
+       ↓
+   Emit 'contest:join' Event
+       ↓
+   GameService.HandleContestJoin()
+       ↓
+   Validate User Session
+       ↓
+   Check Contest Availability
+       ↓
+   Add User to League_joins Table
+       ↓
+   Search for Opponent
+       ↓
+   Find Active User in Same Contest?
+       ↓
+   YES → Create Match Pair (UUID)
+       ↓
+   Store in match_pairs Table
+       ↓
+   Update Both Users' Status
+       ↓
+   Notify Both Players
+       ↓
+   Game Starts
+       ↓
+   NO → Wait in Queue
+       ↓
+   Continue Searching
+       ↓
+   Timeout After 30 Seconds
+       ↓
+   Cancel or Retry
+
+
+=====================================================================================================================================
+Socket Connection Process Flow
+
+
+Client Connects
+       ↓
+   Socket.IO Handshake
+       ↓
+   OnConnection Event
+       ↓
+   Store Socket ID
+       ↓
+   Send Welcome Message
+       ↓
+   Emit 'connect_response'
+       ↓
+   Request Device Info
+       ↓
+   Client Sends Device Info
+       ↓
+   Store in sessions_by_socket Table
+       ↓
+   Connection Established ✅
+       ↓
+   Setup Event Handlers
+       ↓
+   Auth Handlers
+       ↓
+   Game Handlers
+       ↓
+   System Handlers
+       ↓
+   Ready for Events
+       ↓
+   Heartbeat Monitoring
+       ↓
+   Disconnect Handling
+       ↓
+   Cleanup Resources
+
+
+=====================================================================================================================================
+ Game State Process Flow
+
+Player Action
+       ↓
+   Emit 'player_action' Event
+       ↓
+   GameService.HandlePlayerAction()
+       ↓
+   Validate Session
+       ↓
+   Check Game State
+       ↓
+   Validate Action
+       ↓
+   Update Game State
+       ↓
+   Store in Cassandra
+       ↓
+   Broadcast to Opponent
+       ↓
+   Check Game Rules
+       ↓
+   Valid Move?
+       ↓
+   YES → Update Board
+       ↓
+   NO → Reject Action
+       ↓
+   Check Win Condition
+       ↓
+   Game Over?
+       ↓
+   YES → Declare Winner
+       ↓
+   Update match_pairs Status
+       ↓
+   NO → Continue Game
+       ↓
+   Next Player Turn
+
+
+
+============================================
+Contest Join Process Flow
+
+
+User Joins Contest
+       ↓
+   Emit 'contest:join' Event
+       ↓
+   GameService.HandleContestJoin()
+       ↓
+   Validate Session
+       ↓
+   Check Contest ID
+       ↓
+   Contest Valid?
+       ↓
+   YES → Check User Eligibility
+       ↓
+   NO → Return Contest Not Found
+       ↓
+   User Eligible?
+       ↓
+   YES → Add to league_joins Table
+       ↓
+   NO → Return Not Eligible Error
+       ↓
+   Search for Opponent
+       ↓
+   Find Active User?
+       ↓
+   YES → Create Match Pair
+       ↓
+   Update Both Users
+       ↓
+   Notify Players
+       ↓
+   Start Game
+       ↓
+   NO → Wait in Queue
+       ↓
+   Continue Searching
+       ↓
+   Timeout Handling
+       ↓
+   Retry or Cancel

@@ -125,6 +125,12 @@ func (s *AuthService) HandleLogin(loginReq models.LoginRequest) (*models.LoginRe
 		CreatedAt:    time.Now(),
 		ExpiresAt:    sessionExpiry,
 		UserStatus:   existingUser.Status,
+		// Connection data integrated into session
+		ConnectedAt: time.Now(),
+		LastSeen:    time.Now(),
+		UserAgent:   "", // Will be updated if available
+		IPAddress:   "", // Will be updated if available
+		Namespace:   "", // Will be updated if available
 	}
 
 	err = s.sessionService.CreateSession(sessionData)

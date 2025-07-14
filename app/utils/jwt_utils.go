@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -192,7 +191,6 @@ func GenerateEncryptedJWTTokenWithFCM(mobileNo, deviceID, userID, sessionID, fcm
 		return "", fmt.Errorf("failed to sign JWT token: %v", err)
 	}
 
-	log.Printf("✅ Encrypted JWT token generated successfully for user: %s", mobileNo)
 	return tokenString, nil
 }
 
@@ -232,7 +230,6 @@ func GenerateJWTToken(mobileNo, deviceID, userID string) (string, error) {
 		return "", fmt.Errorf("failed to sign JWT token: %v", err)
 	}
 
-	log.Printf("✅ JWT token generated successfully for user: %s", mobileNo)
 	return tokenString, nil
 }
 
@@ -303,7 +300,6 @@ func VerifyEncryptedJWTToken(tokenString string) (*EncryptedJWTData, error) {
 		return nil, fmt.Errorf("token has expired")
 	}
 
-	log.Printf("✅ Encrypted JWT token verified successfully for user: %s", claims.MobileNo)
 	return &encryptedJWTData, nil
 }
 
@@ -337,7 +333,6 @@ func VerifyJWTToken(tokenString string) (*JWTClaims, error) {
 		return nil, fmt.Errorf("failed to extract JWT claims")
 	}
 
-	log.Printf("✅ JWT token verified successfully for user: %s", claims.MobileNo)
 	return claims, nil
 }
 
@@ -508,7 +503,6 @@ func GenerateJWTTokenWithFCM(mobileNo, deviceID, fcmToken string) (string, error
 		return "", fmt.Errorf("failed to sign JWT token: %v", err)
 	}
 
-	log.Printf("✅ JWT token generated successfully for user: %s with FCM token", mobileNo)
 	return tokenString, nil
 }
 
@@ -568,7 +562,6 @@ func GenerateSimpleJWTToken(mobileNo, deviceID, fcmToken string) (string, error)
 		return "", fmt.Errorf("failed to sign JWT token: %v", err)
 	}
 
-	log.Printf("✅ Simple JWT token generated successfully for user: %s", mobileNo)
 	return tokenString, nil
 }
 
@@ -629,7 +622,6 @@ func VerifySimpleJWTToken(tokenString string) (*SimpleJWTData, error) {
 		return nil, fmt.Errorf("device ID mismatch in decrypted data")
 	}
 
-	log.Printf("✅ Simple JWT token verified successfully for user: %s", claims.MobileNo)
 	return &simpleJWTData, nil
 }
 

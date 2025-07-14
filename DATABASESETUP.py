@@ -221,27 +221,77 @@ try:
     # print("✅ Created dice_rolls_lookup table")
 
     # Drop old dice_rolls_data table if it exists
-    try:
-        session.execute("DROP TABLE IF EXISTS dice_rolls_data")
-        print("🗑️ Dropped old dice_rolls_data table")
-    except Exception as e:
-        print(f"⚠️ Could not drop old dice_rolls_data table: {e}")
+    # try:
+    #     session.execute("DROP TABLE IF EXISTS dice_rolls_data")
+    #     print("🗑️ Dropped old dice_rolls_data table")
+    # except Exception as e:
+    #     print(f"⚠️ Could not drop old dice_rolls_data table: {e}")
 
-    # Step 15: Create the dice_rolls_data table for full dice roll data indexed by lookup_dice_id and roll_id
+    # # Step 15: Create the dice_rolls_data table for full dice roll data indexed by lookup_dice_id and roll_id
+    # session.execute("""
+    #     CREATE TABLE IF NOT EXISTS dice_rolls_data (
+    #         lookup_dice_id UUID,
+    #         roll_id UUID,
+    #         dice_number INT,
+    #         roll_timestamp TIMESTAMP,
+    #         session_token TEXT,
+    #         device_id TEXT,
+    #         contest_id TEXT,
+    #         created_at TIMESTAMP,
+    #         PRIMARY KEY ((lookup_dice_id), roll_id)
+    #     ) WITH CLUSTERING ORDER BY (roll_id DESC)
+    # """)
+    # print("✅ Created dice_rolls_data table")
+
+    # Step 16: Create the game_pieces table for storing individual piece moves
     session.execute("""
-        CREATE TABLE IF NOT EXISTS dice_rolls_data (
-            lookup_dice_id UUID,
-            roll_id UUID,
-            dice_number INT,
-            roll_timestamp TIMESTAMP,
-            session_token TEXT,
-            device_id TEXT,
-            contest_id TEXT,
+        CREATE TABLE IF NOT EXISTS game_pieces (
+            game_id TEXT,
+            user_id TEXT,
+            move_number INT,
+            piece_id UUID,  
+            player_id TEXT,
+            from_pos_last TEXT,
+            to_pos_last TEXT,
+            piece_type TEXT,
+            captured_piece TEXT,
             created_at TIMESTAMP,
-            PRIMARY KEY ((lookup_dice_id), roll_id)
-        ) WITH CLUSTERING ORDER BY (roll_id DESC)
+            updated_at TIMESTAMP,
+            PRIMARY KEY ((game_id, user_id), move_number, piece_id)
+        ) WITH CLUSTERING ORDER BY (move_number ASC, piece_id ASC)
     """)
-    print("✅ Created dice_rolls_data table")
+    print("✅ Created game_pieces table")
+
+    # Step 17: Create the piece_moves table for storing aggregated piece statistics
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS piece_moves (
+            game_id TEXT,
+            user_id TEXT,
+            piece_id UUID,
+            total_moves INT,
+            last_position TEXT,
+            last_move_time TIMESTAMP,
+            player_id TEXT,
+            piece_type TEXT,
+            current_state TEXT, 
+            move_history TEXT,
+            piece_metadata TEXT,
+            created_at TIMESTAMP,
+            updated_at TIMESTAMP,
+            PRIMARY KEY ((game_id, user_id, piece_id))
+        )
+    """)
+    print("✅ Created piece_moves table")
+
+    # Step 18: Create secondary indexes for efficient queries
+    try:
+        session.execute("CREATE INDEX IF NOT EXISTS ON game_pieces (piece_type)")
+        session.execute("CREATE INDEX IF NOT EXISTS ON game_pieces (player_id)")
+        session.execute("CREATE INDEX IF NOT EXISTS ON piece_moves (piece_type)")
+        session.execute("CREATE INDEX IF NOT EXISTS ON piece_moves (player_id)")
+        print("✅ Created secondary indexes for game pieces tables")
+    except Exception as e:
+        print(f"⚠️ Could not create some indexes: {e}")
     
     print("✅ All keyspace and tables created successfully!")
 

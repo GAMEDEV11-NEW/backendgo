@@ -1,9 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"gofiber/app/models"
 	"gofiber/app/services"
-	"log"
 	"time"
 
 	socketio "github.com/doquangtan/socket.io/v4"
@@ -23,6 +23,7 @@ func (e *AuthenticationError) Error() string {
 type SocketIoHandler struct {
 	io               *socketio.Io
 	socketService    *services.SocketService
+	messagingService *services.MessagingService
 	authHandler      *AuthSocketHandler
 	gameHandler      *GameSocketHandler
 	gameboardHandler *GameboardSocketHandler
@@ -42,8 +43,17 @@ func NewSocketHandler(socketService *services.SocketService) *SocketIoHandler {
 		systemHandler:    NewSystemSocketHandler(socketService),
 	}
 
+	// Set the Socket.IO instance in the socket service
+	socketService.SetIo(io)
+
 	handler.setupSocketHandlers()
 	return handler
+}
+
+// SetMessagingService sets the messaging service for the socket handler
+func (h *SocketIoHandler) SetMessagingService(messagingService *services.MessagingService) {
+	h.messagingService = messagingService
+	h.socketService.SetMessagingService(messagingService)
 }
 
 // authenticateUser validates user authentication for all events
@@ -121,7 +131,6 @@ func (h *SocketIoHandler) authenticateUser(socket *socketio.Socket, eventName st
 		}
 	}
 
-	log.Printf("✅ User authenticated for event %s: %s (socket: %s)", eventName, user.MobileNo, socket.Id)
 	return &user, nil
 }
 
@@ -129,7 +138,6 @@ func (h *SocketIoHandler) authenticateUser(socket *socketio.Socket, eventName st
 func (h *SocketIoHandler) setupSocketHandlers() {
 	// Authorization handler
 	h.io.OnAuthorization(func(params map[string]string) bool {
-		log.Printf("Authorization attempt with params: %v", params)
 		// For now, allow all connections
 		// In production, you would validate tokens here
 		return true
@@ -137,7 +145,10 @@ func (h *SocketIoHandler) setupSocketHandlers() {
 
 	// Main connection handler
 	h.io.OnConnection(func(socket *socketio.Socket) {
-		log.Printf("✅ Socket connected: %s (namespace: %s)", socket.Id, socket.Nps)
+		// Store basic connection data (will be updated with user data after authentication)
+		if h.messagingService != nil {
+			// Store basic connection info - will be updated when user authenticates
+		}
 
 		// Send welcome message
 		welcome := h.socketService.HandleWelcome()
@@ -172,6 +183,21 @@ func (h *SocketIoHandler) setupSocketHandlers() {
 // GetIo returns the Socket.IO instance
 func (h *SocketIoHandler) GetIo() *socketio.Io {
 	return h.io
+}
+
+// SendMessageToSocket sends a message to a specific socket
+func (h *SocketIoHandler) SendMessageToSocket(socketID string, event string, data interface{}) error {
+	// Get all connected sockets
+	sockets := h.io.Sockets()
+
+	// Find the specific socket
+	for _, socket := range sockets {
+		if socket.Id == socketID {
+			socket.Emit(event, data)
+			return nil
+		}
+	}
+	return fmt.Errorf("socket %s not found", socketID)
 }
 
 // SetupSocketRoutes configures Socket.IO routes for the Fiber app

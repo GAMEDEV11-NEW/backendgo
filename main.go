@@ -8,6 +8,7 @@ import (
 	"gofiber/config"
 	"gofiber/database"
 	"log"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -39,15 +40,28 @@ func main() {
 	// Initialize socket service with Cassandra session
 	socketService := services.NewSocketService(database.CassandraSession)
 
+	// Initialize socket handler
 	socketHandler := config.NewSocketHandler(socketService)
+
+	// Initialize messaging service with Session Service and Socket.IO
+	messagingService := services.NewMessagingService(socketService.GetSessionService(), socketHandler.GetIo())
+	socketHandler.SetMessagingService(messagingService)
+
+	// Initialize cron service for matchmaking
+	cronService := services.NewCronService(database.CassandraSession)
+
+	// Start matchmaking cron job (runs every 30 seconds)
+	cronService.StartMatchmakingCron(3 * time.Second)
+
+	// Start cleanup cron job (runs every 5 minutes, cleans matches older than 24 hours)
+	cronService.RunCleanupCron(5*time.Minute, 24*time.Hour)
 
 	// Setup Socket.IO routes (this should be before regular routes)
 	socketHandler.SetupSocketRoutes(app)
 
 	// Initialize regular routes
-	routes.SetupRoutes(app)
+	routes.SetupRoutes(app, messagingService)
 
 	port := config.ServerPort
-	log.Printf("🚀 DEBUG: Server starting on port :%d", port)
 	log.Fatal(app.Listen(fmt.Sprintf(":%d", port)))
 }

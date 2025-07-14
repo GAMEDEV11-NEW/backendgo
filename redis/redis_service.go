@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"time"
@@ -60,10 +59,7 @@ func NewService() *Service {
 	// Test the connection
 	_, err := client.Ping(ctx).Result()
 	if err != nil {
-		log.Printf("⚠️ Warning: Redis connection failed: %v", err)
-		log.Printf("💡 Make sure Redis is running on %s", url)
-	} else {
-		log.Printf("✅ Redis connected successfully to %s", url)
+		// Silent fail - Redis might not be available
 	}
 
 	return &Service{
@@ -88,8 +84,6 @@ func (r *Service) Set(key string, value interface{}, expiration time.Duration) e
 	if err != nil {
 		return fmt.Errorf("failed to set key %s: %v", key, err)
 	}
-
-	log.Printf("📝 Redis SET: %s (expires in %v)", key, expiration)
 	return nil
 }
 
@@ -107,8 +101,6 @@ func (r *Service) Get(key string, dest interface{}) error {
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal value for key %s: %v", key, err)
 	}
-
-	log.Printf("📖 Redis GET: %s", key)
 	return nil
 }
 
@@ -118,8 +110,6 @@ func (r *Service) Delete(key string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete key %s: %v", key, err)
 	}
-
-	log.Printf("🗑️ Redis DELETE: %s", key)
 	return nil
 }
 
@@ -139,8 +129,6 @@ func (r *Service) SetExpiration(key string, expiration time.Duration) error {
 	if err != nil {
 		return fmt.Errorf("failed to set expiration for key %s: %v", key, err)
 	}
-
-	log.Printf("⏰ Redis EXPIRE: %s (expires in %v)", key, expiration)
 	return nil
 }
 
@@ -238,8 +226,6 @@ func (r *Service) IncrementCounter(key string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to increment counter %s: %v", key, err)
 	}
-
-	log.Printf("🔢 Redis INCR: %s = %d", key, result)
 	return result, nil
 }
 
@@ -262,8 +248,6 @@ func (r *Service) SetCounter(key string, value int64, expiration time.Duration) 
 	if err != nil {
 		return fmt.Errorf("failed to set counter %s: %v", key, err)
 	}
-
-	log.Printf("🔢 Redis SET Counter: %s = %d", key, value)
 	return nil
 }
 
@@ -273,8 +257,6 @@ func (r *Service) FlushAll() error {
 	if err != nil {
 		return fmt.Errorf("failed to flush all: %v", err)
 	}
-
-	log.Printf("🧹 Redis FLUSHALL: All data cleared")
 	return nil
 }
 
@@ -286,4 +268,159 @@ func (r *Service) GetClient() *redis.Client {
 // GetContext returns the Redis context
 func (r *Service) GetContext() context.Context {
 	return r.ctx
+}
+
+// ConnectionData represents active connection data stored in Redis
+type ConnectionData struct {
+	SocketID     string    `json:"socket_id"`
+	UserID       string    `json:"user_id"`
+	MobileNo     string    `json:"mobile_no"`
+	SessionToken string    `json:"session_token"`
+	DeviceID     string    `json:"device_id"`
+	FCMToken     string    `json:"fcm_token"`
+	IsActive     bool      `json:"is_active"`
+	ConnectedAt  time.Time `json:"connected_at"`
+	LastSeen     time.Time `json:"last_seen"`
+	UserAgent    string    `json:"user_agent,omitempty"`
+	IPAddress    string    `json:"ip_address,omitempty"`
+	Namespace    string    `json:"namespace,omitempty"`
+}
+
+// CacheConnection stores connection data in Redis for server-to-client messaging
+func (r *Service) CacheConnection(connectionData ConnectionData, expiration time.Duration) error {
+	key := fmt.Sprintf("connection:%s", connectionData.SocketID)
+	return r.Set(key, connectionData, expiration)
+}
+
+// GetConnection retrieves connection data from Redis
+func (r *Service) GetConnection(socketID string) (*ConnectionData, error) {
+	key := fmt.Sprintf("connection:%s", socketID)
+	var connectionData ConnectionData
+	err := r.Get(key, &connectionData)
+	if err != nil {
+		return nil, err
+	}
+	return &connectionData, nil
+}
+
+// DeleteConnection removes connection data from Redis
+func (r *Service) DeleteConnection(socketID string) error {
+	key := fmt.Sprintf("connection:%s", socketID)
+	return r.Delete(key)
+}
+
+// UpdateConnectionLastSeen updates the last seen timestamp for a connection
+func (r *Service) UpdateConnectionLastSeen(socketID string) error {
+	connectionData, err := r.GetConnection(socketID)
+	if err != nil {
+		return err
+	}
+
+	connectionData.LastSeen = time.Now()
+	key := fmt.Sprintf("connection:%s", socketID)
+	return r.Set(key, connectionData, 24*time.Hour)
+}
+
+// GetConnectionsByUserID retrieves all active connections for a specific user
+func (r *Service) GetConnectionsByUserID(userID string) ([]ConnectionData, error) {
+	// Note: This is a simplified implementation
+	// In production, you might want to maintain a separate index
+	pattern := "connection:*"
+	keys, err := r.client.Keys(r.ctx, pattern).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection keys: %v", err)
+	}
+
+	var connections []ConnectionData
+	for _, key := range keys {
+		var connectionData ConnectionData
+		err := r.Get(key, &connectionData)
+		if err == nil && connectionData.UserID == userID && connectionData.IsActive {
+			connections = append(connections, connectionData)
+		}
+	}
+
+	return connections, nil
+}
+
+// GetConnectionsByMobileNo retrieves all active connections for a specific mobile number
+func (r *Service) GetConnectionsByMobileNo(mobileNo string) ([]ConnectionData, error) {
+	pattern := "connection:*"
+	keys, err := r.client.Keys(r.ctx, pattern).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection keys: %v", err)
+	}
+
+	var connections []ConnectionData
+	for _, key := range keys {
+		var connectionData ConnectionData
+		err := r.Get(key, &connectionData)
+		if err == nil && connectionData.MobileNo == mobileNo && connectionData.IsActive {
+			connections = append(connections, connectionData)
+		}
+	}
+
+	return connections, nil
+}
+
+// GetAllActiveConnections retrieves all active connections
+func (r *Service) GetAllActiveConnections() ([]ConnectionData, error) {
+	pattern := "connection:*"
+	keys, err := r.client.Keys(r.ctx, pattern).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection keys: %v", err)
+	}
+
+	var connections []ConnectionData
+	for _, key := range keys {
+		var connectionData ConnectionData
+		err := r.Get(key, &connectionData)
+		if err == nil && connectionData.IsActive {
+			connections = append(connections, connectionData)
+		}
+	}
+
+	return connections, nil
+}
+
+// GetConnectionCount returns the total number of active connections
+func (r *Service) GetConnectionCount() (int64, error) {
+	pattern := "connection:*"
+	keys, err := r.client.Keys(r.ctx, pattern).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get connection keys: %v", err)
+	}
+
+	var count int64
+	for _, key := range keys {
+		var connectionData ConnectionData
+		err := r.Get(key, &connectionData)
+		if err == nil && connectionData.IsActive {
+			count++
+		}
+	}
+
+	return count, nil
+}
+
+// CleanupInactiveConnections removes connections that haven't been seen recently
+func (r *Service) CleanupInactiveConnections(maxIdleTime time.Duration) error {
+	pattern := "connection:*"
+	keys, err := r.client.Keys(r.ctx, pattern).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get connection keys: %v", err)
+	}
+
+	cutoffTime := time.Now().Add(-maxIdleTime)
+	var cleanedCount int64
+
+	for _, key := range keys {
+		var connectionData ConnectionData
+		err := r.Get(key, &connectionData)
+		if err == nil && connectionData.LastSeen.Before(cutoffTime) {
+			r.Delete(key)
+			cleanedCount++
+		}
+	}
+	return nil
 }

@@ -3,7 +3,6 @@ package config
 import (
 	"gofiber/app/models"
 	"gofiber/app/services"
-	"log"
 	"time"
 
 	socketio "github.com/doquangtan/socket.io/v4"
@@ -25,7 +24,6 @@ func NewSystemSocketHandler(socketService *services.SocketService) *SystemSocket
 func (h *SystemSocketHandler) SetupSystemHandlers(socket *socketio.Socket, authFunc func(socket *socketio.Socket, eventName string) (*models.User, error)) {
 	// Heartbeat handler
 	socket.On("heartbeat", func(event *socketio.EventPayload) {
-		log.Printf("💓 Heartbeat received from %s", socket.Id)
 
 		// Authenticate user
 		_, err := authFunc(socket, "heartbeat")
@@ -53,7 +51,6 @@ func (h *SystemSocketHandler) SetupSystemHandlers(socket *socketio.Socket, authF
 
 	// Health check handler
 	socket.On("health_check", func(event *socketio.EventPayload) {
-		log.Printf("🏥 Health check received from %s", socket.Id)
 
 		// Authenticate user
 		_, err := authFunc(socket, "health_check")
@@ -81,7 +78,6 @@ func (h *SystemSocketHandler) SetupSystemHandlers(socket *socketio.Socket, authF
 
 	// Ping handler
 	socket.On("ping", func(event *socketio.EventPayload) {
-		log.Printf("🏓 Ping received from %s", socket.Id)
 
 		// Authenticate user
 		_, err := authFunc(socket, "ping")
@@ -112,7 +108,6 @@ func (h *SystemSocketHandler) SetupSystemHandlers(socket *socketio.Socket, authF
 
 	// Disconnect handlers
 	socket.On("disconnecting", func(event *socketio.EventPayload) {
-		log.Printf("🔌 Socket disconnecting: %s (namespace: %s)", socket.Id, socket.Nps)
 	})
 
 	socket.On("disconnect", func(event *socketio.EventPayload) {

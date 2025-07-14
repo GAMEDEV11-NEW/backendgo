@@ -6,7 +6,6 @@ import (
 	"gofiber/app/models"
 	"gofiber/app/utils"
 	"gofiber/redis"
-	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -646,7 +645,6 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 		`, userID, existingStatusID, existingJoinMonth, existingJoinedAt).Scan(
 			&oldUserID, &oldLeagueID, &oldID, &oldOpponentUserID, &oldOpponentLeagueID)
 		if err != nil {
-			log.Printf("⚠️ Failed to read old league_joins row for status change: %v", err)
 			continue
 		}
 		// Insert new row with status_id = '2' in league_joins
@@ -655,7 +653,6 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		`).Bind(oldUserID, "2", existingJoinMonth, existingJoinedAt, oldLeagueID, oldID, oldOpponentUserID, oldOpponentLeagueID).Exec()
 		if err != nil {
-			log.Printf("⚠️ Failed to insert new league_joins row for status change: %v", err)
 			continue
 		}
 		// Delete old row in league_joins
@@ -663,7 +660,6 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 			DELETE FROM league_joins WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
 		`, oldUserID, existingStatusID, existingJoinMonth, existingJoinedAt).Exec()
 		if err != nil {
-			log.Printf("⚠️ Failed to delete old league_joins row for status change: %v", err)
 			continue
 		}
 		// Now update pending_league_joins for the same entry
@@ -682,17 +678,14 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 				VALUES (?, ?, ?, ?, ?, ?, ?)
 			`).Bind("2", joinDay, oldLeagueID, existingJoinedAt, oldPendingID, oldPendingOpponentUserID, userID).Exec()
 			if err != nil {
-				log.Printf("⚠️ Failed to insert new pending_league_joins row for status change: %v", err)
 			}
 			// Delete old row in pending_league_joins
 			err = s.cassandraSession.Query(`
 				DELETE FROM pending_league_joins WHERE status_id = ? AND join_day = ? AND league_id = ? AND joined_at = ?
 			`, "1", joinDay, oldLeagueID, existingJoinedAt).Exec()
 			if err != nil {
-				log.Printf("⚠️ Failed to delete old pending_league_joins row for status change: %v", err)
 			}
 		}
-		log.Printf("🔄 Updated existing entry status_id to '2' for user %s in join_month %s and pending_league_joins", userID, existingJoinMonth)
 	}
 	iter.Close()
 
@@ -700,9 +693,7 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 	newStatusID := "1" // Default for first join
 	if hasExisting {
 		newStatusID = "1" // New entry always gets "1", previous gets "2"
-		log.Printf("📝 User %s rejoining contest %s, new entry gets status_id '1'", userID, leagueID)
 	} else {
-		log.Printf("📝 User %s first time joining contest %s, status_id '1'", userID, leagueID)
 	}
 
 	// Now insert the new league_joins record
@@ -721,7 +712,6 @@ func (s *GameService) HandleContestJoin(joinReq models.ContestJoinRequest) (*mod
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`).Bind(newStatusID, joinDay, leagueID, joinedAtTime, joinUUID, "NULL", userID).Exec()
 	if err != nil {
-		log.Printf("⚠️ Failed to insert into pending_league_joins: %v", err)
 	}
 
 	return &models.ContestJoinResponse{
@@ -1107,7 +1097,7 @@ func (s *GameService) GetCassandraSession() *gocql.Session {
 }
 
 // MatchAndUpdateOpponent finds another unmatched user in the same league, updates both users' records, and returns the opponent info
-func (s *GameService) MatchAndUpdateOpponent(currentUserID, leagueID string, currentJoinedAt time.Time) (*models.LeagueJoin, error) {
+func (s *GameService) MatchAndUpdateOpponent(currentUserID, leagueID string, currentJoinedAt time.Time) (*models.LeagueJoin, gocql.UUID, error) {
 	joinDay := currentJoinedAt.Format("2006-01-02")
 	var currentUserOpponentUserID *string
 	err := s.cassandraSession.Query(`
@@ -1118,7 +1108,7 @@ func (s *GameService) MatchAndUpdateOpponent(currentUserID, leagueID string, cur
 	`, "1", joinDay, leagueID, currentUserID).Scan(&currentUserOpponentUserID)
 
 	if err == nil && currentUserOpponentUserID != nil && *currentUserOpponentUserID != "" {
-		return nil, nil
+		return nil, gocql.UUID{}, nil
 	}
 
 	// Step 1: Find a candidate opponent in pending_league_joins
@@ -1135,12 +1125,12 @@ func (s *GameService) MatchAndUpdateOpponent(currentUserID, leagueID string, cur
 
 	if !iter.Scan(&opponentUserID, &opponentJoinedAt, &opponentID) {
 		iter.Close()
-		return nil, nil // No match found
+		return nil, gocql.UUID{}, nil // No match found
 	}
 	iter.Close()
 
 	if opponentUserID == currentUserID {
-		return nil, nil
+		return nil, gocql.UUID{}, nil
 	}
 
 	// Step 2: Fetch the full row for that user from league_joins
@@ -1155,7 +1145,7 @@ func (s *GameService) MatchAndUpdateOpponent(currentUserID, leagueID string, cur
 		&fullOpponent.UserID, &fullOpponent.LeagueID, &fullOpponent.JoinedAt, &fullOpponent.ID, &fullOpponent.OpponentUserID, &fullOpponent.OpponentLeagueID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, gocql.UUID{}, err
 	}
 
 	// Step 3: Update both tables for both users
@@ -1184,17 +1174,17 @@ func (s *GameService) MatchAndUpdateOpponent(currentUserID, leagueID string, cur
 	`, currentUserID, "1", joinDay, leagueID, opponentJoinedAt).Exec()
 
 	// Step 4: Create match pair entry in match_pairs table
-	err = s.createMatchPairEntry(currentUserID, opponentUserID, leagueID, currentJoinedAt)
+	matchPairID, err := s.createMatchPairEntry(currentUserID, opponentUserID, leagueID, currentJoinedAt)
 	if err != nil {
-		log.Printf("⚠️ Warning: Failed to create match pair entry: %v", err)
-		// Don't return error here as the main matching logic succeeded
+		// Return error to ensure match pair creation is critical
+		return nil, gocql.UUID{}, fmt.Errorf("failed to create match pair: %v", err)
 	}
 
-	return &fullOpponent, nil
+	return &fullOpponent, matchPairID, nil
 }
 
 // createMatchPairEntry creates a match pair entry in the match_pairs table
-func (s *GameService) createMatchPairEntry(user1ID, user2ID, leagueID string, matchTime time.Time) error {
+func (s *GameService) createMatchPairEntry(user1ID, user2ID, leagueID string, matchTime time.Time) (gocql.UUID, error) {
 	// Generate UUID for the match pair
 	id := gocql.TimeUUID()
 	now := time.Now()
@@ -1209,20 +1199,15 @@ func (s *GameService) createMatchPairEntry(user1ID, user2ID, leagueID string, ma
 
 	err := s.cassandraSession.Query(query, id, user1ID, user2ID, user1Data, user2Data, "active", now, now).Exec()
 	if err != nil {
-		log.Printf("❌ Error creating match pair entry: %v", err)
-		return fmt.Errorf("failed to create match pair entry: %v", err)
+		return gocql.UUID{}, fmt.Errorf("failed to create match pair entry: %v", err)
 	}
-
-	log.Printf("✅ Created match pair entry with ID: %s for users %s and %s in league %s", id.String(), user1ID, user2ID, leagueID)
-	return nil
+	return id, nil
 }
 
 // GetLeagueJoinEntry fetches a user's league_joins entry for a contest
 func (s *GameService) GetLeagueJoinEntry(userID, contestID string) (*models.LeagueJoin, error) {
-	log.Printf("🔍 GetLeagueJoinEntry - userID: %s, contestID: %s", userID, contestID)
 
 	// Debug: Check what's in the database for this user
-	log.Printf("🔍 DEBUG: Checking league_joins table for user %s in contest %s", userID, contestID)
 
 	iter := s.cassandraSession.Query(`
 		SELECT user_id, status_id, join_month, joined_at, league_id, id, opponent_user_id, opponent_league_id
@@ -1241,21 +1226,17 @@ func (s *GameService) GetLeagueJoinEntry(userID, contestID string) (*models.Leag
 		latestEntry models.LeagueJoin
 	)
 	for iter.Scan(&entry.UserID, &statusID, &joinMonth, &joinedAt, &entry.LeagueID, &entry.ID, &entry.OpponentUserID, &entry.OpponentLeagueID) {
-		log.Printf("🔍 DEBUG: Found entry - User: %s, Status: %s, Month: %s, Joined: %s, League: %s, Opponent: %s, OpponentLeague: %s",
-			entry.UserID, statusID, joinMonth, joinedAt.Format(time.RFC3339), entry.LeagueID, entry.OpponentUserID, entry.OpponentLeagueID)
 
 		if !found || joinedAt.After(latestTime) {
 			latestEntry = entry
 			latestEntry.JoinedAt = joinedAt
 			latestTime = joinedAt
 			found = true
-			log.Printf("✅ Found league join entry: userID=%s, contestID=%s, joinedAt=%s", entry.UserID, entry.LeagueID, joinedAt.Format(time.RFC3339))
 		}
 	}
 	iter.Close()
 
 	if !found {
-		log.Printf("❌ No league join entry found for userID=%s, contestID=%s", userID, contestID)
 		return nil, fmt.Errorf("entry not found")
 	}
 	return &latestEntry, nil
@@ -1274,7 +1255,6 @@ func (s *GameService) UpdateOpponentDetails(userID, leagueID, opponentUserID, op
 		WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
 	`, opponentUserID, opponentLeagueID, userID, "1", joinMonth, joinedAt).Exec()
 	if err != nil {
-		log.Printf("⚠️ Failed to update league_joins opponent details: %v", err)
 		return err
 	}
 
@@ -1288,11 +1268,9 @@ func (s *GameService) UpdateOpponentDetails(userID, leagueID, opponentUserID, op
 		WHERE status_id = ? AND join_day = ? AND league_id = ? AND joined_at = ?
 	`, opponentUserID, "1", joinDay, leagueID, joinedAt).Exec()
 	if err != nil {
-		log.Printf("⚠️ Failed to update pending_league_joins opponent details: %v", err)
 		return err
 	}
 
-	log.Printf("✅ Updated opponent details for user %s in league %s: opponent=%s", userID, leagueID, opponentUserID)
 	return nil
 }
 
@@ -1315,7 +1293,6 @@ func (s *GameService) UpdateLeagueJoinStatus(userID, leagueID, newStatusID, join
 	`, userID, "1", joinMonth, joinedAt).Scan(
 		&oldUserID, &oldLeagueID, &oldJoinedAt, &oldID, &oldOpponentUserID, &oldOpponentLeagueID)
 	if err != nil {
-		log.Printf("⚠️ Failed to read old league_joins row for status change: %v", err)
 		return err
 	}
 
@@ -1325,7 +1302,6 @@ func (s *GameService) UpdateLeagueJoinStatus(userID, leagueID, newStatusID, join
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`).Bind(oldUserID, newStatusID, joinMonth, oldJoinedAt, oldLeagueID, oldID, oldOpponentUserID, oldOpponentLeagueID).Exec()
 	if err != nil {
-		log.Printf("⚠️ Failed to insert new league_joins row for status change: %v", err)
 		return err
 	}
 
@@ -1334,14 +1310,47 @@ func (s *GameService) UpdateLeagueJoinStatus(userID, leagueID, newStatusID, join
 		DELETE FROM league_joins WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
 	`, oldUserID, "1", joinMonth, oldJoinedAt).Exec()
 	if err != nil {
-		log.Printf("⚠️ Failed to delete old league_joins row for status change: %v", err)
 		return err
 	}
 
 	return nil
 }
 
+// UpdateMatchPairStatus updates the status of match pairs for a user
+func (s *GameService) UpdateMatchPairStatus(userID, newStatus string) error {
+	// Find all match pairs for this user and update their status
+	iter := s.cassandraSession.Query(`
+		SELECT id, user1_id, user2_id, status FROM match_pairs 
+		WHERE user1_id = ? OR user2_id = ?
+		ALLOW FILTERING
+	`, userID, userID).Iter()
+
+	var matchID gocql.UUID
+	var u1ID, u2ID, currentStatus string
+	updatedCount := 0
+
+	for iter.Scan(&matchID, &u1ID, &u2ID, &currentStatus) {
+		// Only update if current status is "active"
+		if currentStatus == "active" {
+			err := s.cassandraSession.Query(`
+				UPDATE match_pairs SET status = ?, updated_at = ?
+				WHERE id = ?
+			`, newStatus, time.Now(), matchID).Exec()
+
+			if err != nil {
+				// Failed to update match pair
+			} else {
+				updatedCount++
+			}
+		}
+	}
+	iter.Close()
+
+	return nil
+}
+
 // UpdateLeagueJoinStatusBoth updates status_id in both league_joins and pending_league_joins for all pending entries for the user and league in the last 3 months
+// Also updates match_pairs table status if the new status is "4" (cancelled)
 func (s *GameService) UpdateLeagueJoinStatusBoth(userID, leagueID, newStatusID, _ string) error {
 	now := time.Now()
 	months := []string{
@@ -1422,5 +1431,14 @@ func (s *GameService) UpdateLeagueJoinStatusBoth(userID, leagueID, newStatusID, 
 		}
 		iter.Close()
 	}
+
+	// If status is "4" (cancelled), also update match_pairs table
+	if newStatusID == "4" {
+		err := s.UpdateMatchPairStatus(userID, "cancelled")
+		if err != nil {
+			// Failed to update match pairs
+		}
+	}
+
 	return nil
 }
