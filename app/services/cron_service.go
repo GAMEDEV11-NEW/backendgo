@@ -32,7 +32,6 @@ func NewCronService(cassandraSession *gocql.Session) *CronService {
 // StartMatchmakingCron starts the matchmaking cron job
 func (c *CronService) StartMatchmakingCron(interval time.Duration) {
 	if c.isRunning {
-		log.Println("⚠️ Matchmaking cron is already running")
 		return
 	}
 
@@ -58,7 +57,6 @@ func (c *CronService) StartMatchmakingCron(interval time.Duration) {
 			// 3. Otherwise, wait for the interval
 			select {
 			case <-c.stopChan:
-				log.Println("🛑 Stopping matchmaking cron job")
 				return
 			case <-time.After(interval):
 				// Loop continues
@@ -70,42 +68,36 @@ func (c *CronService) StartMatchmakingCron(interval time.Duration) {
 // StopMatchmakingCron stops the matchmaking cron job
 func (c *CronService) StopMatchmakingCron() {
 	if !c.isRunning {
-		log.Println("⚠️ Matchmaking cron is not running")
 		return
 	}
 
 	c.isRunning = false
 	c.stopChan <- true
-	log.Println("🛑 Matchmaking cron job stopped")
 }
 
 // runMatchmaking executes the matchmaking process
 func (c *CronService) runMatchmaking() {
-	startTime := time.Now()
-	log.Println("🔄 Running scheduled matchmaking process...")
+	// startTime := time.Now()
 
 	// Process matchmaking
 	err := c.matchmakingService.ProcessMatchmaking()
 	if err != nil {
-		log.Printf("❌ Matchmaking process failed: %v", err)
 		return
 	}
 
 	// Get and log statistics
-	stats, err := c.matchmakingService.GetMatchmakingStats()
+	_, err = c.matchmakingService.GetMatchmakingStats()
 	if err != nil {
-		log.Printf("❌ Failed to get matchmaking stats: %v", err)
 		return
 	}
 
-	duration := time.Since(startTime)
-	log.Printf("✅ Matchmaking completed in %v", duration)
-	log.Printf("📊 Stats: %+v", stats)
+	// duration := time.Since(startTime)
+	// log.Printf("✅ Matchmaking completed in %v", duration)
+	// log.Printf("📊 Stats: %+v", stats)
 }
 
 // RunCleanupCron starts the cleanup cron job
 func (c *CronService) RunCleanupCron(interval time.Duration, maxAge time.Duration) {
-	log.Printf("🧹 Starting cleanup cron job (interval: %v, max age: %v)", interval, maxAge)
 
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -116,7 +108,6 @@ func (c *CronService) RunCleanupCron(interval time.Duration, maxAge time.Duratio
 			case <-ticker.C:
 				c.runCleanup(maxAge)
 			case <-c.stopChan:
-				log.Println("🛑 Stopping cleanup cron job")
 				return
 			}
 		}
@@ -125,15 +116,12 @@ func (c *CronService) RunCleanupCron(interval time.Duration, maxAge time.Duratio
 
 // runCleanup executes the cleanup process
 func (c *CronService) runCleanup(maxAge time.Duration) {
-	log.Println("🧹 Running scheduled cleanup process...")
 
 	err := c.matchmakingService.CleanupExpiredMatches(maxAge)
 	if err != nil {
-		log.Printf("❌ Cleanup process failed: %v", err)
 		return
 	}
 
-	log.Println("✅ Cleanup completed")
 }
 
 // IsRunning returns whether the cron service is currently running

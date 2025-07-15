@@ -3,7 +3,6 @@ package services
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -224,7 +223,6 @@ func (s *GamePiecesService) storePieceMoveInRedis(gameID, userID, pieceID, fromP
 				}
 			}
 		default:
-			log.Printf("[REDIS_STORE] Warning: unexpected move_history type: %T, creating new history", v)
 			moveHistory = []map[string]interface{}{}
 		}
 

@@ -1,11 +1,15 @@
 package config
 
 import (
+	"fmt"
 	"gofiber/app/models"
 	"gofiber/app/services"
 	"time"
 
+	"gofiber/app/utils"
+
 	socketio "github.com/doquangtan/socket.io/v4"
+	"github.com/gocql/gocql"
 )
 
 // GameboardSocketHandler handles all gameboard-related Socket.IO events
@@ -164,10 +168,12 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 
 	// Dice roll handler
 	socket.On("dice:roll", func(event *socketio.EventPayload) {
+		fmt.Printf("DEBUG: dice:roll event received for socket %s\n", socket.Id)
 
 		// Authenticate user
 		user, err := authFunc(socket, "dice:roll")
 		if err != nil {
+			fmt.Printf("DEBUG: Authentication failed for socket %s: %v\n", socket.Id, err)
 			if authErr, ok := err.(*AuthenticationError); ok {
 				socket.Emit("authentication_error", authErr.ConnectionError)
 			} else {
@@ -184,8 +190,10 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 			}
 			return
 		}
+		fmt.Printf("DEBUG: Authentication successful for user %s\n", user.ID)
 
 		if len(event.Data) == 0 {
+			fmt.Printf("DEBUG: No dice data provided for socket %s\n", socket.Id)
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
@@ -200,9 +208,52 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 			return
 		}
 
-		// Parse dice request
-		diceData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
+		// Support both legacy and new encrypted payloads
+		var diceData map[string]interface{}
+		var jwtToken string
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			// Check for new encrypted format
+			if encrypted, hasEncrypted := raw["user_data"]; hasEncrypted {
+				jwtToken, _ = raw["jwt_token"].(string)
+				encStr, _ := encrypted.(string)
+				if jwtToken != "" && encStr != "" {
+					decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+					if err != nil {
+						fmt.Printf("DEBUG: Failed to decrypt user_data: %v\n", err)
+						errorResp := models.ConnectionError{
+							Status:    "error",
+							ErrorCode: models.ErrorCodeInvalidFormat,
+							ErrorType: models.ErrorTypeFormat,
+							Field:     "user_data",
+							Message:   "Failed to decrypt user_data",
+							Timestamp: time.Now().UTC().Format(time.RFC3339),
+							SocketID:  socket.Id,
+							Event:     "connection_error",
+						}
+						socket.Emit("connection_error", errorResp)
+						return
+					}
+					diceData = decrypted
+				} else {
+					errorResp := models.ConnectionError{
+						Status:    "error",
+						ErrorCode: models.ErrorCodeMissingField,
+						ErrorType: models.ErrorTypeField,
+						Field:     "jwt_token/user_data",
+						Message:   "jwt_token and user_data are required",
+						Timestamp: time.Now().UTC().Format(time.RFC3339),
+						SocketID:  socket.Id,
+						Event:     "connection_error",
+					}
+					socket.Emit("connection_error", errorResp)
+					return
+				}
+			} else {
+				// Legacy format
+				diceData = raw
+			}
+		} else {
+			fmt.Printf("DEBUG: Invalid dice data format for socket %s\n", socket.Id)
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
@@ -224,7 +275,11 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 		deviceID, deviceOk := diceData["device_id"].(string)
 		jwtToken, jwtOk := diceData["jwt_token"].(string)
 
+		fmt.Printf("DEBUG: Field validation - gameID: %s, contestID: %s, sessionToken: %s, deviceID: %s, jwtToken: %s\n",
+			gameID, contestID, sessionToken, deviceID, jwtToken)
+
 		if !gameOk || gameID == "" {
+			fmt.Printf("DEBUG: Missing game_id for socket %s\n", socket.Id)
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
@@ -240,6 +295,7 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 		}
 
 		if !contestOk || contestID == "" {
+			fmt.Printf("DEBUG: Missing contest_id for socket %s\n", socket.Id)
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
@@ -255,6 +311,7 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 		}
 
 		if !sessionOk || sessionToken == "" {
+			fmt.Printf("DEBUG: Missing session_token for socket %s\n", socket.Id)
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
@@ -270,6 +327,7 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 		}
 
 		if !deviceOk || deviceID == "" {
+			fmt.Printf("DEBUG: Missing device_id for socket %s\n", socket.Id)
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
@@ -285,6 +343,7 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 		}
 
 		if !jwtOk || jwtToken == "" {
+			fmt.Printf("DEBUG: Missing jwt_token for socket %s\n", socket.Id)
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
@@ -299,7 +358,10 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 			return
 		}
 
+		fmt.Printf("DEBUG: All fields validated successfully for user %s, game %s\n", user.ID, gameID)
+
 		// Create dice service and roll dice
+		fmt.Printf("DEBUG: Creating dice service for user %s\n", user.ID)
 		diceService := services.NewDiceService(h.socketService.GetCassandraSession())
 		rollReq := models.DiceRollRequest{
 			GameID:       gameID,
@@ -309,8 +371,10 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 			JWTToken:     jwtToken,
 		}
 
+		fmt.Printf("DEBUG: Calling RollDice for user %s, game %s\n", user.ID, gameID)
 		response, err := diceService.RollDice(rollReq, user.ID)
 		if err != nil {
+			fmt.Printf("DEBUG: RollDice failed for user %s: %v\n", user.ID, err)
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeVerificationError,
@@ -325,12 +389,17 @@ func (h *GameboardSocketHandler) SetupGameboardHandlers(socket *socketio.Socket,
 			return
 		}
 
+		fmt.Printf("DEBUG: Dice roll successful for user %s, dice number: %d\n", user.ID, response.DiceNumber)
+
 		// Send successful response to the player who rolled
 		response.SocketID = socket.Id
+		fmt.Printf("DEBUG: Sending dice:roll:response to user %s\n", user.ID)
 		socket.Emit("dice:roll:response", response)
 
 		// Broadcast dice roll to opponent
+		fmt.Printf("DEBUG: Broadcasting dice roll to opponent for game %s, user %s\n", gameID, user.ID)
 		h.broadcastDiceRollToOpponent(gameID, user.ID, response)
+		fmt.Printf("DEBUG: dice:roll event completed for user %s\n", user.ID)
 	})
 
 	// Dice history handler
@@ -774,11 +843,15 @@ func (h *GameboardSocketHandler) storeSessionData(socketID, userID, mobileNo, de
 
 // broadcastDiceRollToOpponent sends the dice roll update to the opponent
 func (h *GameboardSocketHandler) broadcastDiceRollToOpponent(gameID, userID string, diceResponse *models.DiceRollResponse) {
+	fmt.Printf("DEBUG: broadcastDiceRollToOpponent called for game %s, user %s\n", gameID, userID)
+
 	// Get opponent user ID from the game
 	opponentUserID := h.getOpponentUserID(gameID, userID)
 	if opponentUserID == "" {
+		fmt.Printf("DEBUG: No opponent found for game %s, user %s\n", gameID, userID)
 		return
 	}
+	fmt.Printf("DEBUG: Found opponent %s for game %s, user %s\n", opponentUserID, gameID, userID)
 
 	// Create dice roll update message
 	diceUpdate := map[string]interface{}{
@@ -794,9 +867,12 @@ func (h *GameboardSocketHandler) broadcastDiceRollToOpponent(gameID, userID stri
 		"data":        diceResponse.Data,
 	}
 
-	// Send dice roll update to opponent
-	h.sendMessageToUser(opponentUserID, diceUpdate, "opponent:dice:roll:update")
+	fmt.Printf("DEBUG: Created dice update message for opponent %s: %+v\n", opponentUserID, diceUpdate)
 
+	// Send dice roll update to opponent
+	fmt.Printf("DEBUG: Sending dice roll update to opponent %s\n", opponentUserID)
+	h.sendMessageToUser(opponentUserID, diceUpdate, "opponent:dice:roll:update")
+	fmt.Printf("DEBUG: broadcastDiceRollToOpponent completed for opponent %s\n", opponentUserID)
 }
 
 // broadcastMoveToOpponent sends the move update to the opponent
@@ -932,77 +1008,70 @@ func (h *GameboardSocketHandler) broadcastGameEndToOpponent(gameID, userID strin
 
 // getOpponentUserID finds the opponent user ID for a given game and user
 func (h *GameboardSocketHandler) getOpponentUserID(gameID, userID string) string {
-	// Query match_pairs table to find the opponent
-	var user1ID, user2ID string
+	fmt.Printf("DEBUG: getOpponentUserID called for game %s, user %s\n", gameID, userID)
+
+	// Query match_pairs table to find the opponent using user1_data and user2_data columns
+	var user1ID, user2ID, user1Data, user2Data string
 
 	err := h.socketService.GetCassandraSession().Query(`
-		SELECT user1_id, user2_id FROM match_pairs 
+		SELECT user1_id, user2_id, user1_data, user2_data FROM match_pairs 
 		WHERE id = ?
-	`, gameID).Scan(&user1ID, &user2ID)
+	`, gameID).Scan(&user1ID, &user2ID, &user1Data, &user2Data)
 
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to find match pair by game ID %s: %v\n", gameID, err)
 		// Try to find match pair by user ID instead
 		iter := h.socketService.GetCassandraSession().Query(`
-			SELECT id, user1_id, user2_id, status FROM match_pairs 
+			SELECT id, user1_id, user2_id, user1_data, user2_data, status FROM match_pairs 
 			WHERE user1_id = ? OR user2_id = ?
 			ALLOW FILTERING
 		`, userID, userID).Iter()
 
-		var matchID, u1ID, u2ID, status string
-		var foundMatchPair bool
-		for iter.Scan(&matchID, &u1ID, &u2ID, &status) {
-			// Check if this is the most recent active match for this user
-			// Only consider active match pairs (exclude disconnected, cancelled, completed)
+		var matchID gocql.UUID
+		var u1ID, u2ID, u1Data, u2Data, status string
+		for iter.Scan(&matchID, &u1ID, &u2ID, &u1Data, &u2Data, &status) {
 			if status == "active" {
-				user1ID = u1ID
-				user2ID = u2ID
-				foundMatchPair = true
+				fmt.Printf("DEBUG: Found match pair by user ID: user1=%s, user2=%s, user1_data=%s, user2_data=%s\n", u1ID, u2ID, u1Data, u2Data)
 
-				break
+				// Check if current user matches user1_data or user2_data
+				if u1Data == userID {
+					fmt.Printf("DEBUG: User %s found in user1_data, opponent is %s\n", userID, u2Data)
+					iter.Close()
+					return u2Data
+				} else if u2Data == userID {
+					fmt.Printf("DEBUG: User %s found in user2_data, opponent is %s\n", userID, u1Data)
+					iter.Close()
+					return u1Data
+				}
 			}
 		}
 		iter.Close()
-
-		if !foundMatchPair {
-			// Check if there are any match pairs in the database at all
-			allMatchPairsIter := h.socketService.GetCassandraSession().Query(`
-				SELECT id, user1_id, user2_id, status FROM match_pairs 
-				LIMIT 10
-			`).Iter()
-
-			var allMatchID, allUser1ID, allUser2ID, allStatus string
-			for allMatchPairsIter.Scan(&allMatchID, &allUser1ID, &allUser2ID, &allStatus) {
-				// Check if this match pair contains our user and is active
-				// Only consider active match pairs (exclude disconnected, cancelled, completed)
-				if (allUser1ID == userID || allUser2ID == userID) && allStatus == "active" {
-					user1ID = allUser1ID
-					user2ID = allUser2ID
-					foundMatchPair = true
-
-					break
-				}
-			}
-			allMatchPairsIter.Close()
-
-			if !foundMatchPair {
-				return ""
-			}
-		}
+		fmt.Printf("DEBUG: User %s not found in any match pair data\n", userID)
+		return ""
 	}
 
-	// Determine which user is the opponent
-	if user1ID == userID {
-		return user2ID
-	} else if user2ID == userID {
-		return user1ID
+	fmt.Printf("DEBUG: Found match pair by game ID: user1=%s, user2=%s, user1_data=%s, user2_data=%s\n", user1ID, user2ID, user1Data, user2Data)
+
+	// Check if current user matches user1_data or user2_data
+	if user1Data == userID {
+		fmt.Printf("DEBUG: User %s found in user1_data, opponent is %s\n", userID, user2Data)
+		return user2Data
+	} else if user2Data == userID {
+		fmt.Printf("DEBUG: User %s found in user2_data, opponent is %s\n", userID, user1Data)
+		return user1Data
 	}
+
+	fmt.Printf("DEBUG: User %s not found in match pair data (user1_data=%s, user2_data=%s)\n", userID, user1Data, user2Data)
 	return ""
 }
 
 // sendMessageToUser sends a message to a specific user using available services
 func (h *GameboardSocketHandler) sendMessageToUser(userID string, message map[string]interface{}, eventName string) {
+	fmt.Printf("DEBUG: sendMessageToUser called for user %s, event %s\n", userID, eventName)
+
 	// Try messaging service first
 	if h.socketService.GetMessagingService() != nil {
+		fmt.Printf("DEBUG: Using messaging service for user %s\n", userID)
 		messageData := services.MessageData{
 			Event:     eventName,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -1012,10 +1081,14 @@ func (h *GameboardSocketHandler) sendMessageToUser(userID string, message map[st
 
 		err := h.socketService.GetMessagingService().SendMessageToUser(userID, messageData)
 		if err != nil {
+			fmt.Printf("DEBUG: Messaging service failed for user %s: %v, trying direct socket emission\n", userID, err)
 			// Try direct socket emission as fallback
 			h.sendDirectToSockets(userID, eventName, message)
+		} else {
+			fmt.Printf("DEBUG: Message sent successfully via messaging service to user %s\n", userID)
 		}
 	} else {
+		fmt.Printf("DEBUG: No messaging service available, using direct socket emission for user %s\n", userID)
 		// Try direct socket emission as fallback
 		h.sendDirectToSockets(userID, eventName, message)
 	}
@@ -1023,33 +1096,43 @@ func (h *GameboardSocketHandler) sendMessageToUser(userID string, message map[st
 
 // sendDirectToSockets sends a message directly to all sockets of a user
 func (h *GameboardSocketHandler) sendDirectToSockets(userID string, eventName string, message map[string]interface{}) {
+	fmt.Printf("DEBUG: sendDirectToSockets called for user %s, event %s\n", userID, eventName)
+
 	// Get all sessions for this user
 	sessions, err := h.socketService.GetSessionService().GetSessionsByUserID(userID)
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to get sessions for user %s: %v\n", userID, err)
 		return
 	}
 
+	fmt.Printf("DEBUG: Found %d sessions for user %s\n", len(sessions), userID)
 	if len(sessions) == 0 {
+		fmt.Printf("DEBUG: No sessions found for user %s\n", userID)
 		return
 	}
 
 	var sentCount int
 	for _, session := range sessions {
+		fmt.Printf("DEBUG: Processing session for user %s: socketID=%s, isActive=%t\n", userID, session.SocketID, session.IsActive)
 		if session.SocketID != "" {
 			// Try to emit directly to the socket using Socket.IO instance
 			if h.socketService.GetIo() != nil {
+				fmt.Printf("DEBUG: Using Socket.IO instance for user %s, socket %s\n", userID, session.SocketID)
 				// Get all connected sockets
 				sockets := h.socketService.GetIo().Sockets()
+				fmt.Printf("DEBUG: Total connected sockets: %d\n", len(sockets))
 
 				// Find the specific socket and emit the message
 				for _, socket := range sockets {
 					if socket.Id == session.SocketID {
+						fmt.Printf("DEBUG: Found matching socket %s for user %s, emitting message\n", session.SocketID, userID)
 						socket.Emit(eventName, message)
 						sentCount++
 						break
 					}
 				}
 			} else if h.socketService.GetMessagingService() != nil {
+				fmt.Printf("DEBUG: Using messaging service fallback for user %s, socket %s\n", userID, session.SocketID)
 				// Fallback to messaging service
 				err := h.socketService.GetMessagingService().SendMessageToSocket(session.SocketID, services.MessageData{
 					Event:     eventName,
@@ -1059,10 +1142,18 @@ func (h *GameboardSocketHandler) sendDirectToSockets(userID string, eventName st
 				})
 				if err == nil {
 					sentCount++
+					fmt.Printf("DEBUG: Message sent via messaging service to socket %s\n", session.SocketID)
+				} else {
+					fmt.Printf("DEBUG: Failed to send message via messaging service to socket %s: %v\n", session.SocketID, err)
 				}
 			} else {
+				fmt.Printf("DEBUG: No Socket.IO or messaging service available for user %s\n", userID)
 				sentCount++
 			}
+		} else {
+			fmt.Printf("DEBUG: Session for user %s has no socket ID\n", userID)
 		}
 	}
+
+	fmt.Printf("DEBUG: sendDirectToSockets completed for user %s, sent to %d sockets\n", userID, sentCount)
 }

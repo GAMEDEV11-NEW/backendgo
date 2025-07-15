@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"github.com/gocql/gocql"
+)
 
 // DeviceInfo represents device information sent by client
 type DeviceInfo struct {
@@ -505,17 +509,19 @@ type ResendOTPResponse struct {
 
 // LeagueJoin represents league join/match details
 type LeagueJoin struct {
-	UserID           string    `json:"user_id"`
-	StatusID         string    `json:"status_id"`
-	JoinMonth        string    `json:"join_month"`
-	JoinedAt         time.Time `json:"joined_at"`
-	LeagueID         string    `json:"league_id"`
-	Status           string    `json:"status"`
-	ExtraData        string    `json:"extra_data"`
-	ID               string    `json:"id"`
-	InviteCode       string    `json:"invite_code"`
-	OpponentLeagueID string    `json:"opponent_league_id"`
-	OpponentUserID   string    `json:"opponent_user_id"`
-	Role             string    `json:"role"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	UserID           string     `json:"user_id"`
+	StatusID         string     `json:"status_id"`
+	JoinMonth        string     `json:"join_month"`
+	JoinedAt         time.Time  `json:"joined_at"`
+	LeagueID         string     `json:"league_id"`
+	Status           string     `json:"status"`
+	ExtraData        string     `json:"extra_data"`
+	ID               string     `json:"id"`
+	InviteCode       string     `json:"invite_code"`
+	OpponentLeagueID string     `json:"opponent_league_id"`
+	OpponentUserID   string     `json:"opponent_user_id"`
+	Role             string     `json:"role"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	MatchPairID      gocql.UUID `json:"match_pair_id"`
+	TurnID           int        `json:"turn_id"`
 }

@@ -647,3 +647,50 @@ func ValidateSimpleJWTToken(tokenString string) (*SimpleJWTData, error) {
 
 	return simpleData, nil
 }
+
+// DecryptUserData decrypts user_data using the first 32 chars of the JWT token as the key
+func DecryptUserData(encryptedData string, jwtToken string) (map[string]interface{}, error) {
+	// Use first 32 chars of JWT as key
+	key := []byte(jwtToken)
+	if len(key) < 32 {
+		padded := make([]byte, 32)
+		copy(padded, key)
+		key = padded
+	} else {
+		key = key[:32]
+	}
+
+	iv := make([]byte, 16) // Must match client's IV (all zeros)
+
+	ciphertext, err := base64.StdEncoding.DecodeString(encryptedData)
+	if err != nil {
+		return nil, err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	mode := cipher.NewCBCDecrypter(block, iv)
+	plaintext := make([]byte, len(ciphertext))
+	mode.CryptBlocks(plaintext, ciphertext)
+
+	// Remove PKCS#7 padding
+	plaintext = pkcs7Unpad(plaintext)
+
+	var result map[string]interface{}
+	err = json.Unmarshal(plaintext, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// pkcs7Unpad removes PKCS#7 padding
+func pkcs7Unpad(data []byte) []byte {
+	length := len(data)
+	unpadding := int(data[length-1])
+	return data[:(length - unpadding)]
+}

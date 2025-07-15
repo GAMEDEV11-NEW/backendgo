@@ -9,6 +9,7 @@ import (
 	"time"
 
 	socketio "github.com/doquangtan/socket.io/v4"
+	"github.com/gocql/gocql"
 )
 
 // GameSocketHandler handles all game and contest-related Socket.IO events
@@ -808,6 +809,7 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
+		// Validate mobile number from token
 		var user models.User
 		err = h.socketService.GetCassandraSession().Query(`
 			SELECT id, mobile_no, full_name, status, language_code
@@ -838,7 +840,16 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID)
+
+		// Compute join_month for fast lookup
+		joinMonth := time.Now().Format("2006-01")
+		if joinedAtStr, ok := reqData["joined_at"].(string); ok && joinedAtStr != "" {
+			if t, err := time.Parse(time.RFC3339, joinedAtStr); err == nil {
+				joinMonth = t.Format("2006-01")
+			}
+		}
+
+		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID, joinMonth)
 		if err != nil {
 			socket.Emit("opponent:response", map[string]interface{}{
 				"status":     "error",
@@ -852,19 +863,14 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 
 		if entry.OpponentUserID != "" && entry.OpponentUserID != "NULL" {
 
-			// Get user pieces for this game using match_pairs ID
+			// Get user pieces for this game using match_pair_id from league_joins
 			var userPieces []map[string]interface{}
 			var opponentPieces []map[string]interface{}
-
-			// Get match_pairs ID to use as game_id
-			matchPairID, err := h.socketService.GetMatchPairID(userID, entry.OpponentUserID, contestID)
-			if err != nil {
-				// No match found, pieces will be created when matched
-				userPieces = []map[string]interface{}{}
-				opponentPieces = []map[string]interface{}{}
-			} else {
-				// Use match_pairs ID as game_id from game_pieces table
-				gameID := matchPairID.String()
+			var gameID string
+			// Use match_pair_id directly from league_joins entry
+			if entry.MatchPairID.String() != "" && entry.MatchPairID.String() != "00000000-0000-0000-0000-000000000000" {
+				// Use match_pair_id as game_id from game_pieces table
+				gameID = entry.MatchPairID.String()
 
 				gamePiecesService := services.NewGamePiecesService(h.socketService.GetCassandraSession())
 
@@ -887,19 +893,52 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 					// Enhance pieces with comprehensive data structure
 					opponentPieces = h.enhancePiecesWithComprehensiveData(opponentPieces, gameID, entry.OpponentUserID)
 				}
-			}
 
-			response := map[string]interface{}{
-				"status":             "success",
-				"user_id":            userID,
-				"opponent_user_id":   entry.OpponentUserID,
-				"opponent_league_id": entry.OpponentLeagueID,
-				"joined_at":          entry.JoinedAt.Format(time.RFC3339),
-				"user_pieces":        userPieces,
-				"opponent_pieces":    opponentPieces,
-				"pieces_status":      "active", // Indicates pieces are available
+				// Get user's dice ID
+				var userDiceID gocql.UUID
+				err = h.socketService.GetCassandraSession().Query(`SELECT dice_id FROM dice_rolls_lookup WHERE game_id = ? AND user_id = ? LIMIT 1`, gameID, userID).Scan(&userDiceID)
+				if err != nil {
+					userDiceID = gocql.UUID{}
+				}
+
+				// Get opponent's dice ID
+				var opponentDiceID gocql.UUID
+				err = h.socketService.GetCassandraSession().Query(`SELECT dice_id FROM dice_rolls_lookup WHERE game_id = ? AND user_id = ? LIMIT 1`, gameID, entry.OpponentUserID).Scan(&opponentDiceID)
+				if err != nil {
+					opponentDiceID = gocql.UUID{}
+				}
+
+				response := map[string]interface{}{
+					"status":             "success",
+					"user_id":            userID,
+					"opponent_user_id":   entry.OpponentUserID,
+					"opponent_league_id": entry.OpponentLeagueID,
+					"joined_at":          entry.JoinedAt.Format(time.RFC3339),
+					"game_id":            gameID,
+					"user_pieces":        userPieces,
+					"opponent_pieces":    opponentPieces,
+					"user_dice":          userDiceID.String(),
+					"opponent_dice":      opponentDiceID.String(),
+					"pieces_status":      "active", // Indicates pieces are available
+					"turn_id":            entry.TurnID,
+				}
+				socket.Emit("opponent:response", response)
+			} else {
+				// Optionally, emit a minimal/pending response, but do NOT include zero dice IDs
+				response := map[string]interface{}{
+					"status":             "pending",
+					"user_id":            userID,
+					"opponent_user_id":   entry.OpponentUserID,
+					"opponent_league_id": entry.OpponentLeagueID,
+					"joined_at":          entry.JoinedAt.Format(time.RFC3339),
+					"game_id":            "",
+					"user_pieces":        []map[string]interface{}{},
+					"opponent_pieces":    []map[string]interface{}{},
+					"pieces_status":      "pending",
+					"turn_id":            entry.TurnID,
+				}
+				socket.Emit("opponent:response", response)
 			}
-			socket.Emit("opponent:response", response)
 		} else {
 			// Do NOT attempt to match here, just return pending
 			response := map[string]interface{}{
@@ -993,8 +1032,15 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 
+		// Compute join_month for fast lookup
+		joinMonth := time.Now().Format("2006-01")
+		if joinedAtStr, ok := reqData["joined_at"].(string); ok && joinedAtStr != "" {
+			if t, err := time.Parse(time.RFC3339, joinedAtStr); err == nil {
+				joinMonth = t.Format("2006-01")
+			}
+		}
 		// Get league join entry to find opponent
-		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID)
+		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID, joinMonth)
 		if err != nil {
 			socket.Emit("opponent:info:response", map[string]interface{}{
 				"status":     "error",
@@ -1139,7 +1185,13 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 		// Get entry to find joined_at
-		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID)
+		joinMonth := time.Now().Format("2006-01")
+		if joinedAtStr, ok := reqData["joined_at"].(string); ok && joinedAtStr != "" {
+			if t, err := time.Parse(time.RFC3339, joinedAtStr); err == nil {
+				joinMonth = t.Format("2006-01")
+			}
+		}
+		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID, joinMonth)
 		if err != nil {
 			socket.Emit("cancel:find:response", map[string]interface{}{
 				"status":  "error",

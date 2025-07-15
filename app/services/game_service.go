@@ -1180,6 +1180,16 @@ func (s *GameService) MatchAndUpdateOpponent(currentUserID, leagueID string, cur
 		return nil, gocql.UUID{}, fmt.Errorf("failed to create match pair: %v", err)
 	}
 
+	// Update match_pair_id for both users in league_joins
+	_ = s.cassandraSession.Query(`
+		UPDATE league_joins SET match_pair_id = ?
+		WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+	`, matchPairID, currentUserID, "1", currentJoinMonth, currentJoinedAtTime).Exec()
+	_ = s.cassandraSession.Query(`
+		UPDATE league_joins SET match_pair_id = ?
+		WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
+	`, matchPairID, opponentUserID, "1", opponentJoinMonth, opponentJoinedAt).Exec()
+
 	return &fullOpponent, matchPairID, nil
 }
 
@@ -1205,28 +1215,36 @@ func (s *GameService) createMatchPairEntry(user1ID, user2ID, leagueID string, ma
 }
 
 // GetLeagueJoinEntry fetches a user's league_joins entry for a contest
-func (s *GameService) GetLeagueJoinEntry(userID, contestID string) (*models.LeagueJoin, error) {
-
-	// Debug: Check what's in the database for this user
+func (s *GameService) GetLeagueJoinEntry(userID, contestID, joinMonth string) (*models.LeagueJoin, error) {
 
 	iter := s.cassandraSession.Query(`
-		SELECT user_id, status_id, join_month, joined_at, league_id, id, opponent_user_id, opponent_league_id
+		SELECT user_id, status_id, join_month, joined_at, league_id, id, opponent_user_id, opponent_league_id, match_pair_id, turn_id
 		FROM league_joins
-		WHERE user_id = ? AND league_id = ? AND status_id = ?
+		WHERE user_id = ? AND league_id = ? AND status_id = ? AND join_month = ?
 		ALLOW FILTERING
-	`, userID, contestID, "1").Iter()
+	`, userID, contestID, "1", joinMonth).Iter()
 
 	var (
-		entry       models.LeagueJoin
-		statusID    string
-		joinMonth   string
-		joinedAt    time.Time
-		found       bool
-		latestTime  time.Time
-		latestEntry models.LeagueJoin
+		entry        models.LeagueJoin
+		statusID     string
+		joinMonthVal string
+		joinedAt     time.Time
+		found        bool
+		latestTime   time.Time
+		latestEntry  models.LeagueJoin
 	)
-	for iter.Scan(&entry.UserID, &statusID, &joinMonth, &joinedAt, &entry.LeagueID, &entry.ID, &entry.OpponentUserID, &entry.OpponentLeagueID) {
-
+	for iter.Scan(
+		&entry.UserID,
+		&statusID,
+		&joinMonthVal,
+		&joinedAt,
+		&entry.LeagueID,
+		&entry.ID,
+		&entry.OpponentUserID,
+		&entry.OpponentLeagueID,
+		&entry.MatchPairID,
+		&entry.TurnID, // <-- Make sure this is here and in the right order!
+	) {
 		if !found || joinedAt.After(latestTime) {
 			latestEntry = entry
 			latestEntry.JoinedAt = joinedAt

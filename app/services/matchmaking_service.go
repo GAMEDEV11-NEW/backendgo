@@ -134,21 +134,40 @@ func (m *MatchmakingService) createDiceRolls(gameID, user1ID, user2ID string) er
 
 // createMatch creates a match between two users
 func (m *MatchmakingService) createMatch(user1, user2 PendingMatch) (*MatchResult, error) {
-	// Create match pair entry
+	fmt.Printf("DEBUG: createMatch called for user1: %s, user2: %s\n", user1.UserID, user2.UserID)
+
+	// Store only user IDs in user1_data and user2_data columns
+	user1Data := user1.UserID
+	user2Data := user2.UserID
+
+	fmt.Printf("DEBUG: User1 ID: %s\n", user1Data)
+	fmt.Printf("DEBUG: User2 ID: %s\n", user2Data)
+
+	// Create match pair entry with user IDs
 	matchPairID := gocql.TimeUUID()
 	now := time.Now()
-	// Store league_joins.id for user1_id and user2_id
+
+	// Store league_joins.id for user1_id and user2_id, plus user IDs in data columns
 	err := m.cassandraSession.Query(`
-		INSERT INTO match_pairs (id, user1_id, user2_id, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, matchPairID, user1.ID, user2.ID, "active", now, now).Exec()
+		INSERT INTO match_pairs (id, user1_id, user2_id, user1_data, user2_data, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, matchPairID, user1.ID, user2.ID, user1Data, user2Data, "active", now, now).Exec()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create match pair: %v", err)
 	}
 
+	// Determine turnID based on join time
+	var turnID1, turnID2 int
+	if user1.JoinedAt.Before(user2.JoinedAt) {
+		turnID1 = 1
+		turnID2 = 2
+	} else {
+		turnID1 = 2
+		turnID2 = 1
+	}
 	// Update both users' league_joins entries with opponent info
-	_ = m.updateUserWithOpponent(user1, user2.UserID, user1.LeagueID)
-	_ = m.updateUserWithOpponent(user2, user1.UserID, user2.LeagueID)
+	_ = m.updateUserWithOpponent(user1, user2.UserID, user1.LeagueID, matchPairID, turnID1)
+	_ = m.updateUserWithOpponent(user2, user1.UserID, user2.LeagueID, matchPairID, turnID2)
 
 	// Update pending_league_joins entries with opponent info
 	_ = m.updatePendingWithOpponent(user1, user2.UserID)
@@ -185,12 +204,16 @@ func (m *MatchmakingService) createMatch(user1, user2 PendingMatch) (*MatchResul
 }
 
 // updateUserWithOpponent updates a user's league_joins entry with opponent info
-func (m *MatchmakingService) updateUserWithOpponent(user PendingMatch, opponentUserID, opponentLeagueID string) error {
+func (m *MatchmakingService) updateUserWithOpponent(user PendingMatch, opponentUserID, leagueID string, matchPairID gocql.UUID, turnID int) error {
 	joinMonth := user.JoinedAt.Format("2006-01")
-	return m.cassandraSession.Query(`
-		UPDATE league_joins SET opponent_user_id = ?, opponent_league_id = ?
-		WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?
-	`, opponentUserID, opponentLeagueID, user.UserID, user.StatusID, joinMonth, user.JoinedAt).Exec()
+	err := m.cassandraSession.Query(
+		`UPDATE league_joins SET opponent_user_id = ?, opponent_league_id = ?, match_pair_id = ?, turn_id = ? WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?`,
+		opponentUserID, leagueID, matchPairID, turnID, user.UserID, user.StatusID, joinMonth, user.JoinedAt,
+	).Exec()
+	if err != nil {
+		return fmt.Errorf("failed to update league_joins: %v", err)
+	}
+	return nil
 }
 
 // updatePendingWithOpponent updates a user's pending_league_joins entry with opponent info

@@ -30,75 +30,98 @@ func NewDiceService(cassandraSession *gocql.Session) *DiceService {
 
 // RollDice generates a random dice number and stores it in the database
 func (s *DiceService) RollDice(rollReq models.DiceRollRequest, userID string) (*models.DiceRollResponse, error) {
+	fmt.Printf("DEBUG: RollDice called for user %s, game %s\n", userID, rollReq.GameID)
+
 	// Validate session from Redis
 
 	// Get session from Redis
+	fmt.Printf("DEBUG: Getting session from Redis for token %s\n", rollReq.SessionToken)
 	sessionData, err := s.redisService.GetSession(rollReq.SessionToken)
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to get session from Redis: %v\n", err)
 		return nil, fmt.Errorf("invalid or expired session")
 	}
+	fmt.Printf("DEBUG: Session retrieved from Redis successfully\n")
 
 	// Extract session information
 	deviceID, ok := sessionData["device_id"].(string)
 	if !ok {
+		fmt.Printf("DEBUG: Invalid session data - device_id not found\n")
 		return nil, fmt.Errorf("invalid session data")
 	}
 
 	// Check if session is active
 	isActive, ok := sessionData["is_active"].(bool)
 	if !ok || !isActive {
+		fmt.Printf("DEBUG: Session is not active\n")
 		return nil, fmt.Errorf("session is not active")
 	}
 
 	// Check if session is expired
 	expiresAtStr, ok := sessionData["expires_at"].(string)
 	if !ok {
+		fmt.Printf("DEBUG: Invalid session data - expires_at not found\n")
 		return nil, fmt.Errorf("invalid session data")
 	}
 
 	expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to parse session expiry time: %v\n", err)
 		return nil, fmt.Errorf("invalid session data")
 	}
 
 	if time.Now().After(expiresAt) {
+		fmt.Printf("DEBUG: Session is expired\n")
 		return nil, fmt.Errorf("session is expired")
 	}
 
 	// Validate device ID
 	if deviceID != rollReq.DeviceID {
+		fmt.Printf("DEBUG: Device ID mismatch - session: %s, request: %s\n", deviceID, rollReq.DeviceID)
 		return nil, fmt.Errorf("device ID mismatch")
 	}
+
+	fmt.Printf("DEBUG: Session validation successful for user %s\n", userID)
 
 	// Generate random dice number (1-6 for standard dice)
 	rand.Seed(time.Now().UnixNano())
 	diceNumber := rand.Intn(6) + 1
+	fmt.Printf("DEBUG: Generated dice number: %d for user %s\n", diceNumber, userID)
 
 	// 1. Get or create lookup_dice_id for (game_id, user_id) - ensure only ONE entry per user per game
 	var lookupDiceID gocql.UUID
 	err = s.cassandraSession.Query(`SELECT dice_id FROM dice_rolls_lookup WHERE game_id = ? AND user_id = ? LIMIT 1`, rollReq.GameID, userID).Scan(&lookupDiceID)
 	if err != nil {
+		fmt.Printf("DEBUG: No existing dice lookup found for game %s, user %s, creating new one\n", rollReq.GameID, userID)
 		// Not found, create new - this ensures only ONE dice_id per user per game
 		lookupDiceID = gocql.TimeUUID()
 		err = s.cassandraSession.Query(`INSERT INTO dice_rolls_lookup (game_id, user_id, dice_id, created_at) VALUES (?, ?, ?, ?)`, rollReq.GameID, userID, lookupDiceID, time.Now().UTC()).Exec()
 		if err != nil {
+			fmt.Printf("DEBUG: Failed to create dice_rolls_lookup: %v\n", err)
 			return nil, fmt.Errorf("failed to create dice_rolls_lookup: %v", err)
 		}
+		fmt.Printf("DEBUG: Created new dice lookup with ID: %s\n", lookupDiceID.String())
+	} else {
+		fmt.Printf("DEBUG: Found existing dice lookup ID: %s\n", lookupDiceID.String())
 	}
 
 	// 2. Generate a new roll_id for this roll
 	rollID := gocql.TimeUUID()
 	rollTime := time.Now().UTC()
 	createdAt := rollTime
+	fmt.Printf("DEBUG: Generated roll ID: %s\n", rollID.String())
 
 	// 3. Insert into dice_rolls_data
+	fmt.Printf("DEBUG: Inserting dice roll data into database\n")
 	err = s.cassandraSession.Query(`
 		INSERT INTO dice_rolls_data (lookup_dice_id, roll_id, dice_number, roll_timestamp, session_token, device_id, contest_id, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`).Bind(lookupDiceID, rollID, diceNumber, rollTime, rollReq.SessionToken, rollReq.DeviceID, rollReq.ContestID, createdAt).Exec()
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to store dice roll: %v\n", err)
 		return nil, fmt.Errorf("failed to store dice roll: %v", err)
 	}
+	fmt.Printf("DEBUG: Dice roll data stored successfully\n")
 
 	// Prepare response data
 	responseData := map[string]interface{}{
@@ -109,6 +132,8 @@ func (s *DiceService) RollDice(rollReq models.DiceRollRequest, userID string) (*
 		"is_winner":      diceNumber == 6,
 		"bonus_points":   diceNumber * 10,
 	}
+
+	fmt.Printf("DEBUG: RollDice completed successfully for user %s, dice number: %d\n", userID, diceNumber)
 
 	return &models.DiceRollResponse{
 		Status:       "success",

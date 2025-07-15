@@ -157,8 +157,8 @@ func (s *SocketService) MatchAndUpdateOpponent(currentUserID, leagueID string, c
 }
 
 // Expose GetLeagueJoinEntry for checking opponent info
-func (s *SocketService) GetLeagueJoinEntry(userID, contestID string) (*models.LeagueJoin, error) {
-	return s.gameService.GetLeagueJoinEntry(userID, contestID)
+func (s *SocketService) GetLeagueJoinEntry(userID, contestID, joinMonth string) (*models.LeagueJoin, error) {
+	return s.gameService.GetLeagueJoinEntry(userID, contestID, joinMonth)
 }
 
 // Expose UpdateLeagueJoinStatus for updating status_id on disconnect or rejoin

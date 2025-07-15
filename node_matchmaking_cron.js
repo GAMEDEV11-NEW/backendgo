@@ -125,6 +125,21 @@ async function runMatchmaking() {
         );
         console.log('✅ Successfully inserted into match_pairs');
 
+        // Update league_joins for both users with match_pair_id
+        const joinMonth1 = moment(user1.joined_at).format('YYYY-MM');
+        const joinMonth2 = moment(user2.joined_at).format('YYYY-MM');
+        await client.execute(
+          'UPDATE league_joins SET match_pair_id = ? WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?',
+          [matchPairId, user1.user_id, user1.status_id, joinMonth1, new Date(user1.joined_at)],
+          { prepare: true }
+        );
+        await client.execute(
+          'UPDATE league_joins SET match_pair_id = ? WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?',
+          [matchPairId, user2.user_id, user2.status_id, joinMonth2, new Date(user2.joined_at)],
+          { prepare: true }
+        );
+        console.log('✅ Updated league_joins with match_pair_id');
+
         // Create game pieces for both users
         await createGamePieces(matchPairId.toString(), user1.user_id, user2.user_id);
         
@@ -132,9 +147,6 @@ async function runMatchmaking() {
         await createDiceRolls(matchPairId.toString(), user1.user_id, user2.user_id);
 
         // 4. Update league_joins with opponent info (requires join_month)
-        const joinMonth1 = moment(user1.joined_at).format('YYYY-MM');
-        const joinMonth2 = moment(user2.joined_at).format('YYYY-MM');
-        
         await client.execute(
           'UPDATE league_joins SET opponent_user_id = ?, opponent_league_id = ? WHERE user_id = ? AND status_id = ? AND join_month = ? AND joined_at = ?',
           [user2.user_id, user2.league_id, user1.user_id, user1.status_id, joinMonth1, new Date(user1.joined_at)],
