@@ -7,6 +7,12 @@ import (
 
 	"time"
 
+	"gofiber/app/utils"
+
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
+
 	socketio "github.com/doquangtan/socket.io/v4"
 )
 
@@ -98,9 +104,91 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 
-		// Parse login request
-		loginData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
+		// Support both legacy and new encrypted payloads for login
+		var loginData map[string]interface{}
+		var mobileNo string
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			if encrypted, hasEncrypted := raw["user_data"]; hasEncrypted {
+				mobileNo, _ = raw["mobile_no"].(string)
+				encStr, _ := encrypted.(string)
+				if mobileNo != "" && encStr != "" {
+					ciphertext, err := base64.StdEncoding.DecodeString(encStr)
+					if err != nil {
+						errorResp := models.ConnectionError{
+							Status:    "error",
+							ErrorCode: models.ErrorCodeInvalidFormat,
+							ErrorType: models.ErrorTypeFormat,
+							Field:     "user_data",
+							Message:   "Failed to base64 decode user_data",
+							Timestamp: time.Now().UTC().Format(time.RFC3339),
+							SocketID:  socket.Id,
+							Event:     "connection_error",
+						}
+						socket.Emit("connection_error", errorResp)
+						return
+					}
+					decrypted, err := utils.DecryptUserDataWithMobile(encStr, mobileNo)
+					if err != nil {
+						// Try to print raw decrypted string if possible
+						// (simulate what DecryptUserDataWithMobile does internally)
+						key := []byte(mobileNo)
+						if len(key) < 32 {
+							padded := make([]byte, 32)
+							copy(padded, key)
+							key = padded
+						} else {
+							key = key[:32]
+						}
+						iv := make([]byte, 16)
+						block, berr := aes.NewCipher(key)
+						if berr == nil {
+							mode := cipher.NewCBCDecrypter(block, iv)
+							plaintext := make([]byte, len(ciphertext))
+							mode.CryptBlocks(plaintext, ciphertext)
+							// Try to unpad, but print before and after
+							if len(plaintext) > 0 {
+								unpadLen := int(plaintext[len(plaintext)-1])
+								if unpadLen > 0 && unpadLen <= len(plaintext) {
+									plaintext = plaintext[:len(plaintext)-unpadLen]
+								}
+							}
+						}
+						// Return error to client
+						errorResp := models.ConnectionError{
+							Status:    "error",
+							ErrorCode: models.ErrorCodeInvalidFormat,
+							ErrorType: models.ErrorTypeFormat,
+							Field:     "user_data",
+							Message:   "Failed to decrypt user_data",
+							Timestamp: time.Now().UTC().Format(time.RFC3339),
+							SocketID:  socket.Id,
+							Event:     "connection_error",
+						}
+						socket.Emit("connection_error", errorResp)
+						return
+					}
+					loginData = decrypted
+					if _, ok := loginData["mobile_no"]; !ok && mobileNo != "" {
+						loginData["mobile_no"] = mobileNo
+					}
+				} else {
+					errorResp := models.ConnectionError{
+						Status:    "error",
+						ErrorCode: models.ErrorCodeMissingField,
+						ErrorType: models.ErrorTypeField,
+						Field:     "mobile_no/user_data",
+						Message:   "mobile_no and user_data are required",
+						Timestamp: time.Now().UTC().Format(time.RFC3339),
+						SocketID:  socket.Id,
+						Event:     "connection_error",
+					}
+					socket.Emit("connection_error", errorResp)
+					return
+				}
+			} else {
+				loginData = raw
+			}
+		} else {
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
@@ -114,7 +202,6 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 			socket.Emit("connection_error", errorResp)
 			return
 		}
-
 		// Inject socket_id into the login data
 		loginData["socket_id"] = socket.Id
 
@@ -175,9 +262,51 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 
-		// Parse OTP request
-		otpData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
+		// Support both legacy and new encrypted payloads for verify:otp
+		var otpData map[string]interface{}
+		var mobileNo string
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			if encrypted, hasEncrypted := raw["user_data"]; hasEncrypted {
+				mobileNo, _ = raw["mobile_no"].(string)
+				encStr, _ := encrypted.(string)
+				if mobileNo != "" && encStr != "" {
+					decrypted, err := utils.DecryptUserDataWithMobile(encStr, mobileNo)
+					if err != nil {
+						errorResp := models.ConnectionError{
+							Status:    "error",
+							ErrorCode: models.ErrorCodeInvalidFormat,
+							ErrorType: models.ErrorTypeFormat,
+							Field:     "user_data",
+							Message:   "Failed to decrypt user_data",
+							Timestamp: time.Now().UTC().Format(time.RFC3339),
+							SocketID:  socket.Id,
+							Event:     "connection_error",
+						}
+						socket.Emit("connection_error", errorResp)
+						return
+					}
+					otpData = decrypted
+					if _, ok := otpData["mobile_no"]; !ok && mobileNo != "" {
+						otpData["mobile_no"] = mobileNo
+					}
+				} else {
+					errorResp := models.ConnectionError{
+						Status:    "error",
+						ErrorCode: models.ErrorCodeMissingField,
+						ErrorType: models.ErrorTypeField,
+						Field:     "mobile_no/user_data",
+						Message:   "mobile_no and user_data are required",
+						Timestamp: time.Now().UTC().Format(time.RFC3339),
+						SocketID:  socket.Id,
+						Event:     "connection_error",
+					}
+					socket.Emit("connection_error", errorResp)
+					return
+				}
+			} else {
+				otpData = raw
+			}
+		} else {
 			errorResp := models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
@@ -269,10 +398,70 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 
-		// Parse profile request
-		profileData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
-			errorResp := models.ConnectionError{
+		// --- Begin: JWT + user_data extraction ---
+		var profileData map[string]interface{}
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			jwtToken, hasJWT := raw["jwt_token"].(string)
+			encStr, hasUserData := raw["user_data"].(string)
+			if !hasJWT || jwtToken == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "jwt_token",
+					Message:   "jwt_token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			if !hasUserData || encStr == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "user_data",
+					Message:   "user_data is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			// Validate JWT token (optional: you can extract claims if needed)
+			_, err := utils.ValidateSimpleJWTToken(jwtToken)
+			if err != nil {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "jwt_token",
+					Message:   "Failed to validate JWT token",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			// Decrypt user_data using jwt_token as key
+			decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+			if err != nil {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "user_data",
+					Message:   "Failed to decrypt user_data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			profileData = decrypted
+		} else {
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -281,10 +470,10 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
+		// --- End: JWT + user_data extraction ---
 
 		// Convert to SetProfileRequest struct
 		profileJSON, _ := json.Marshal(profileData)
@@ -343,10 +532,67 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 
-		// Parse session restoration request
-		sessionData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
-			errorResp := models.ConnectionError{
+		var reqData map[string]interface{}
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			jwtToken, hasJWT := raw["jwt_token"].(string)
+			encStr, hasUserData := raw["user_data"].(string)
+			if !hasJWT || jwtToken == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "jwt_token",
+					Message:   "jwt_token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			if !hasUserData || encStr == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "user_data",
+					Message:   "user_data is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			_, err := utils.ValidateSimpleJWTToken(jwtToken)
+			if err != nil {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "jwt_token",
+					Message:   "Failed to validate JWT token",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+			if err != nil {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "user_data",
+					Message:   "Failed to decrypt user_data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			reqData = decrypted
+		} else {
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -355,14 +601,13 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
-		sessionToken, ok := sessionData["session_token"].(string)
+		sessionToken, ok := reqData["session_token"].(string)
 		if !ok || sessionToken == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -371,15 +616,14 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		// Try to restore session
 		err := h.socketService.GetSessionService().UpdateSessionSocketID(sessionToken, socket.Id)
 		if err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidSession,
 				ErrorType: models.ErrorTypeAuthentication,
@@ -388,15 +632,14 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		// Get session data to return user info
 		sessionInfo, err := h.socketService.GetSessionService().GetSession(sessionToken)
 		if err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidSession,
 				ErrorType: models.ErrorTypeAuthentication,
@@ -405,8 +648,7 @@ func (h *AuthSocketHandler) SetupAuthHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 

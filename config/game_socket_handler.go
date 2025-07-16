@@ -49,7 +49,7 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		}
 
 		if len(event.Data) == 0 {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -58,15 +58,61 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
-		// Parse main screen request
-		mainData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
-			errorResp := models.ConnectionError{
+		var reqData map[string]interface{}
+		var jwtToken string // Declare before the if block
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			encStr, hasUserData := raw["user_data"].(string)
+			if !hasUserData || encStr == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "user_data",
+					Message:   "user_data is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			var hasJWT bool
+			jwtToken, hasJWT = raw["jwt_token"].(string)
+			if !hasJWT || jwtToken == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "jwt_token",
+					Message:   "JWT token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+			if err != nil {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "user_data",
+					Message:   "Failed to decrypt user_data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			// Ensure jwt_token is set in the decrypted data
+			decrypted["jwt_token"] = jwtToken
+			reqData = decrypted
+		} else {
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -75,16 +121,14 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
-		// Convert to MainScreenRequest struct
-		mainJSON, _ := json.Marshal(mainData)
+		mainJSON, _ := json.Marshal(reqData)
 		var mainReq models.MainScreenRequest
 		if err := json.Unmarshal(mainJSON, &mainReq); err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -93,14 +137,18 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
-
+		// Fallback: if JWTToken is missing in mainReq but present in jwtToken, set it
+		if mainReq.JWTToken == "" && jwtToken != "" {
+			mainReq.JWTToken = jwtToken
+		}
+		// Set JWTToken explicitly so HandleMainScreen receives it
+		mainReq.JWTToken = jwtToken
 		// Validate required fields
 		if mainReq.MobileNo == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -109,13 +157,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if mainReq.FCMToken == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -124,28 +171,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
-			return
-		}
-
-		if mainReq.JWTToken == "" {
-			errorResp := models.ConnectionError{
-				Status:    "error",
-				ErrorCode: models.ErrorCodeMissingField,
-				ErrorType: models.ErrorTypeField,
-				Field:     "jwt_token",
-				Message:   "JWT token is required",
-				Timestamp: time.Now().UTC().Format(time.RFC3339),
-				SocketID:  socket.Id,
-				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if mainReq.DeviceID == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -154,15 +185,13 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
-
 		// Process main screen request with authentication validation
 		response, err := h.socketService.HandleMainScreen(mainReq)
 		if err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeVerificationError,
 				ErrorType: models.ErrorTypeAuthentication,
@@ -171,18 +200,15 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
-
 		// Send only the gamelist data directly
 		socket.Emit("main:screen:game:list", response.Data)
 	})
 
 	// Game list update trigger handler - fetches from Redis and broadcasts to all connected clients
 	socket.On("trigger_game_list_update", func(event *socketio.EventPayload) {
-
 		// Authenticate user
 		_, err := authFunc(socket, "trigger_game_list_update")
 		if err != nil {
@@ -208,13 +234,9 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		if err != nil {
 			// Fallback to generating fresh data
 			gameListData = h.socketService.GetGameListDataPublic()
-		} else {
 		}
-
 		// Broadcast the updated game list to all connected clients via main:screen:game:list
-		// This follows the same pattern as socket.Emit("main:screen:game:list", response.Data)
 		socket.Emit("main:screen:game:list", gameListData)
-
 	})
 
 	// Contest list handler
@@ -240,7 +262,7 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		}
 
 		if len(event.Data) == 0 {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -249,15 +271,61 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
-		// Parse contest request
-		contestData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
-			errorResp := models.ConnectionError{
+		var reqData map[string]interface{}
+		var jwtToken string // Declare before the if block
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			encStr, hasUserData := raw["user_data"].(string)
+			if !hasUserData || encStr == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "user_data",
+					Message:   "user_data is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			var hasJWT bool
+			jwtToken, hasJWT = raw["jwt_token"].(string)
+			if !hasJWT || jwtToken == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "jwt_token",
+					Message:   "JWT token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+			if err != nil {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "user_data",
+					Message:   "Failed to decrypt user_data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			// Ensure jwt_token is set in the decrypted data
+			decrypted["jwt_token"] = jwtToken
+			reqData = decrypted
+		} else {
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -266,16 +334,14 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
-		// Convert to ContestRequest struct
-		contestJSON, _ := json.Marshal(contestData)
+		contestJSON, _ := json.Marshal(reqData)
 		var contestReq models.ContestRequest
 		if err := json.Unmarshal(contestJSON, &contestReq); err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -284,14 +350,16 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
-
+		// Fallback: if JWTToken is missing in contestReq but present in jwtToken, set it
+		if contestReq.JWTToken == "" && jwtToken != "" {
+			contestReq.JWTToken = jwtToken
+		}
 		// Validate required fields
 		if contestReq.MobileNo == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -300,13 +368,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if contestReq.FCMToken == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -315,13 +382,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if contestReq.JWTToken == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -330,13 +396,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if contestReq.DeviceID == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -345,15 +410,14 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		// Process contest request with authentication validation
 		response, err := h.socketService.HandleContestList(contestReq)
 		if err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeVerificationError,
 				ErrorType: models.ErrorTypeAuthentication,
@@ -362,18 +426,15 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
-
 		// Send contest list data
 		socket.Emit("contest:list:response", response)
 	})
 
 	// Contest price gap handler
 	socket.On("list:contest:gap", func(event *socketio.EventPayload) {
-
 		// Authenticate user
 		_, err := authFunc(socket, "list:contest:gap")
 		if err != nil {
@@ -395,7 +456,7 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		}
 
 		if len(event.Data) == 0 {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -404,15 +465,61 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
-		// Parse contest gap request
-		gapData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
-			errorResp := models.ConnectionError{
+		var reqData map[string]interface{}
+		var jwtToken string // Declare before the if block
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			encStr, hasUserData := raw["user_data"].(string)
+			if !hasUserData || encStr == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "user_data",
+					Message:   "user_data is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			var hasJWT bool
+			jwtToken, hasJWT = raw["jwt_token"].(string)
+			if !hasJWT || jwtToken == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "jwt_token",
+					Message:   "JWT token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+			if err != nil {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "user_data",
+					Message:   "Failed to decrypt user_data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			// Ensure jwt_token is set in the decrypted data
+			decrypted["jwt_token"] = jwtToken
+			reqData = decrypted
+		} else {
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -421,16 +528,14 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
-		// Convert to ContestGapRequest struct
-		gapJSON, _ := json.Marshal(gapData)
+		gapJSON, _ := json.Marshal(reqData)
 		var gapReq models.ContestGapRequest
 		if err := json.Unmarshal(gapJSON, &gapReq); err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -439,14 +544,16 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
-
+		// Fallback: if JWTToken is missing in gapReq but present in jwtToken, set it
+		if gapReq.JWTToken == "" && jwtToken != "" {
+			gapReq.JWTToken = jwtToken
+		}
 		// Validate required fields
 		if gapReq.MobileNo == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -455,13 +562,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if gapReq.FCMToken == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -470,13 +576,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if gapReq.JWTToken == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -485,13 +590,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if gapReq.DeviceID == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -500,15 +604,14 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		// Process contest gap request
 		response, err := h.socketService.HandleContestGap(gapReq)
 		if err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeVerificationError,
 				ErrorType: models.ErrorTypeAuthentication,
@@ -517,18 +620,15 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
-
 		// Send contest gap response
 		socket.Emit("list:contest:gap:response", response)
 	})
 
 	// Contest join handler - Simplified version (only join, no matchmaking)
 	socket.On("contest:join", func(event *socketio.EventPayload) {
-
 		// Authenticate user
 		_, err := authFunc(socket, "contest:join")
 		if err != nil {
@@ -550,7 +650,7 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		}
 
 		if len(event.Data) == 0 {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -559,15 +659,59 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
-		// Parse contest join request
-		joinData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
-			errorResp := models.ConnectionError{
+		var reqData map[string]interface{}
+		var jwtToken string // Declare before the if block
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			encStr, hasUserData := raw["user_data"].(string)
+			if !hasUserData || encStr == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "user_data",
+					Message:   "user_data is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			var hasJWT bool
+			jwtToken, hasJWT = raw["jwt_token"].(string)
+			if !hasJWT || jwtToken == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "jwt_token",
+					Message:   "JWT token is required",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+			if err != nil {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeInvalidFormat,
+					ErrorType: models.ErrorTypeFormat,
+					Field:     "user_data",
+					Message:   "Failed to decrypt user_data",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					SocketID:  socket.Id,
+					Event:     "connection_error",
+				})
+				return
+			}
+			reqData = decrypted
+		} else {
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -576,16 +720,14 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
-		// Convert to ContestJoinRequest struct
-		joinJSON, _ := json.Marshal(joinData)
+		joinJSON, _ := json.Marshal(reqData)
 		var joinReq models.ContestJoinRequest
 		if err := json.Unmarshal(joinJSON, &joinReq); err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeInvalidFormat,
 				ErrorType: models.ErrorTypeFormat,
@@ -594,14 +736,16 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
-
+		// Fallback: if JWTToken is missing in joinReq but present in jwtToken, set it
+		if joinReq.JWTToken == "" && jwtToken != "" {
+			joinReq.JWTToken = jwtToken
+		}
 		// Validate required fields
 		if joinReq.MobileNo == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -610,13 +754,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if joinReq.FCMToken == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -625,13 +768,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if joinReq.JWTToken == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -640,13 +782,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if joinReq.DeviceID == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -655,13 +796,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		if joinReq.ContestID == "" {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeMissingField,
 				ErrorType: models.ErrorTypeField,
@@ -670,15 +810,14 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
 
 		// Process contest join request (only join, no matchmaking)
 		response, err := h.socketService.HandleContestJoin(joinReq)
 		if err != nil {
-			errorResp := models.ConnectionError{
+			socket.Emit("connection_error", models.ConnectionError{
 				Status:    "error",
 				ErrorCode: models.ErrorCodeVerificationError,
 				ErrorType: models.ErrorTypeAuthentication,
@@ -687,11 +826,9 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				SocketID:  socket.Id,
 				Event:     "connection_error",
-			}
-			socket.Emit("connection_error", errorResp)
+			})
 			return
 		}
-
 		// Send simple join response without matchmaking
 		socket.Emit("contest:join:response", response)
 	})
@@ -728,8 +865,49 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-		reqData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
+		var reqData map[string]interface{}
+		var jwtToken string // Declare jwtToken before the if block
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			encStr, hasUserData := raw["user_data"].(string)
+			if !hasUserData || encStr == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "user_data",
+					Message:   "user_data is required for authentication",
+				})
+				return
+			}
+			var hasJWT bool
+			jwtToken, hasJWT = raw["jwt_token"].(string)
+			if !hasJWT || jwtToken == "" {
+				socket.Emit("opponent:response", map[string]interface{}{
+					"status":     "error",
+					"error_code": "auth_failed",
+					"error_type": "authentication",
+					"field":      "jwt_token",
+					"message":    "Invalid or expired token",
+				})
+				return
+			}
+			decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+			if err != nil {
+				socket.Emit("opponent:response", map[string]interface{}{
+					"status":     "error",
+					"error_code": "auth_failed",
+					"error_type": "authentication",
+					"field":      "user_data",
+					"message":    "Failed to decrypt user_data",
+				})
+				return
+			}
+			// Fallback: if jwt_token is missing in decrypted but present in jwtToken, set it
+			if _, ok := decrypted["jwt_token"]; !ok && jwtToken != "" {
+				decrypted["jwt_token"] = jwtToken
+			}
+			reqData = decrypted
+		} else {
 			socket.Emit("opponent:response", map[string]interface{}{
 				"status":     "error",
 				"error_code": "invalid_format",
@@ -739,10 +917,9 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
+
 		userID, userOk := reqData["user_id"].(string)
 		contestID, contestOk := reqData["contest_id"].(string)
-		jwtToken, jwtOk := reqData["jwt_token"].(string)
-
 		if !userOk || userID == "" {
 			socket.Emit("opponent:response", map[string]interface{}{
 				"status":     "error",
@@ -763,17 +940,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-		if !jwtOk || jwtToken == "" {
-			socket.Emit("opponent:response", map[string]interface{}{
-				"status":     "error",
-				"error_code": "missing_field",
-				"error_type": "field",
-				"field":      "jwt_token",
-				"message":    "jwt_token is required for authentication",
-			})
-			return
-		}
-		// Validate the JWT token and extract info (like in service layer)
 		simpleJWTData, err := utils.ValidateSimpleJWTToken(jwtToken)
 		if err != nil {
 			socket.Emit("opponent:response", map[string]interface{}{
@@ -785,10 +951,8 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-		tokenMobileNo := simpleJWTData.MobileNo
-		tokenDeviceID := simpleJWTData.DeviceID
 		// Validate mobile number from token
-		if len(tokenMobileNo) < 10 {
+		if len(simpleJWTData.MobileNo) < 10 {
 			socket.Emit("opponent:response", map[string]interface{}{
 				"status":     "error",
 				"error_code": "auth_failed",
@@ -799,7 +963,7 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 		// Validate device ID from token
-		if len(tokenDeviceID) < 1 {
+		if len(simpleJWTData.DeviceID) < 1 {
 			socket.Emit("opponent:response", map[string]interface{}{
 				"status":     "error",
 				"error_code": "auth_failed",
@@ -809,14 +973,13 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-		// Validate mobile number from token
 		var user models.User
 		err = h.socketService.GetCassandraSession().Query(`
 			SELECT id, mobile_no, full_name, status, language_code
 			FROM users
 			WHERE mobile_no = ?
 			ALLOW FILTERING
-		`).Bind(tokenMobileNo).Scan(&user.ID, &user.MobileNo, &user.FullName, &user.Status, &user.LanguageCode)
+		`).Bind(simpleJWTData.MobileNo).Scan(&user.ID, &user.MobileNo, &user.FullName, &user.Status, &user.LanguageCode)
 
 		if err != nil {
 			socket.Emit("opponent:response", map[string]interface{}{
@@ -828,7 +991,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-
 		// Now compare the user ID from database with the request user_id
 		if user.ID != userID {
 			socket.Emit("opponent:response", map[string]interface{}{
@@ -840,15 +1002,22 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-
 		// Compute join_month for fast lookup
 		joinMonth := time.Now().Format("2006-01")
 		if joinedAtStr, ok := reqData["joined_at"].(string); ok && joinedAtStr != "" {
 			if t, err := time.Parse(time.RFC3339, joinedAtStr); err == nil {
 				joinMonth = t.Format("2006-01")
+			} else {
+				socket.Emit("opponent:response", map[string]interface{}{
+					"status":     "error",
+					"error_code": "invalid_format",
+					"error_type": "format",
+					"field":      "joined_at",
+					"message":    "Failed to parse joined_at",
+				})
+				return
 			}
 		}
-
 		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID, joinMonth)
 		if err != nil {
 			socket.Emit("opponent:response", map[string]interface{}{
@@ -860,91 +1029,75 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-
 		if entry.OpponentUserID != "" && entry.OpponentUserID != "NULL" {
-
 			// Get user pieces for this game using match_pair_id from league_joins
 			var userPieces []map[string]interface{}
 			var opponentPieces []map[string]interface{}
 			var gameID string
-			// Use match_pair_id directly from league_joins entry
-			if entry.MatchPairID.String() != "" && entry.MatchPairID.String() != "00000000-0000-0000-0000-000000000000" {
-				// Use match_pair_id as game_id from game_pieces table
-				gameID = entry.MatchPairID.String()
-
-				gamePiecesService := services.NewGamePiecesService(h.socketService.GetCassandraSession())
-
-				// Get current user's pieces and enhance them with comprehensive data
-				userPieces, err = gamePiecesService.GetUserPiecesCurrentState(gameID, userID)
-				if err != nil {
-					// Continue without pieces if there's an error
-					userPieces = []map[string]interface{}{}
-				} else {
-					// Enhance pieces with comprehensive data structure
-					userPieces = h.enhancePiecesWithComprehensiveData(userPieces, gameID, userID)
-				}
-
-				// Get opponent's pieces and enhance them with comprehensive data
-				opponentPieces, err = gamePiecesService.GetUserPiecesCurrentState(gameID, entry.OpponentUserID)
-				if err != nil {
-					// Continue without pieces if there's an error
-					opponentPieces = []map[string]interface{}{}
-				} else {
-					// Enhance pieces with comprehensive data structure
-					opponentPieces = h.enhancePiecesWithComprehensiveData(opponentPieces, gameID, entry.OpponentUserID)
-				}
-
-				// Get user's dice ID
-				var userDiceID gocql.UUID
-				err = h.socketService.GetCassandraSession().Query(`SELECT dice_id FROM dice_rolls_lookup WHERE game_id = ? AND user_id = ? LIMIT 1`, gameID, userID).Scan(&userDiceID)
-				if err != nil {
-					userDiceID = gocql.UUID{}
-				}
-
-				// Get opponent's dice ID
-				var opponentDiceID gocql.UUID
-				err = h.socketService.GetCassandraSession().Query(`SELECT dice_id FROM dice_rolls_lookup WHERE game_id = ? AND user_id = ? LIMIT 1`, gameID, entry.OpponentUserID).Scan(&opponentDiceID)
-				if err != nil {
-					opponentDiceID = gocql.UUID{}
-				}
-
-				response := map[string]interface{}{
-					"status":             "success",
-					"user_id":            userID,
-					"opponent_user_id":   entry.OpponentUserID,
-					"opponent_league_id": entry.OpponentLeagueID,
-					"joined_at":          entry.JoinedAt.Format(time.RFC3339),
-					"game_id":            gameID,
-					"user_pieces":        userPieces,
-					"opponent_pieces":    opponentPieces,
-					"user_dice":          userDiceID.String(),
-					"opponent_dice":      opponentDiceID.String(),
-					"pieces_status":      "active", // Indicates pieces are available
-					"turn_id":            entry.TurnID,
-				}
-				socket.Emit("opponent:response", response)
+			// Use match_pair_id as game_id from game_pieces table
+			gameID = entry.MatchPairID.String()
+			gamePiecesService := services.NewGamePiecesService(h.socketService.GetCassandraSession())
+			userPieces, err = gamePiecesService.GetUserPiecesCurrentState(gameID, userID)
+			if err != nil {
+				// Continue without pieces if there's an error
+				userPieces = []map[string]interface{}{}
 			} else {
-				// Optionally, emit a minimal/pending response, but do NOT include zero dice IDs
-				response := map[string]interface{}{
-					"status":             "pending",
-					"user_id":            userID,
-					"opponent_user_id":   entry.OpponentUserID,
-					"opponent_league_id": entry.OpponentLeagueID,
-					"joined_at":          entry.JoinedAt.Format(time.RFC3339),
-					"game_id":            "",
-					"user_pieces":        []map[string]interface{}{},
-					"opponent_pieces":    []map[string]interface{}{},
-					"pieces_status":      "pending",
-					"turn_id":            entry.TurnID,
-				}
-				socket.Emit("opponent:response", response)
+				// Enhance pieces with comprehensive data structure
+				userPieces = h.enhancePiecesWithComprehensiveData(userPieces, gameID, userID)
 			}
-		} else {
-			// Do NOT attempt to match here, just return pending
+
+			// Get opponent's pieces and enhance them with comprehensive data
+			opponentPieces, err = gamePiecesService.GetUserPiecesCurrentState(gameID, entry.OpponentUserID)
+			if err != nil {
+				// Continue without pieces if there's an error
+				opponentPieces = []map[string]interface{}{}
+			} else {
+				// Enhance pieces with comprehensive data structure
+				opponentPieces = h.enhancePiecesWithComprehensiveData(opponentPieces, gameID, entry.OpponentUserID)
+			}
+
+			// Get user's dice ID
+			var userDiceID gocql.UUID
+			err = h.socketService.GetCassandraSession().Query(`SELECT dice_id FROM dice_rolls_lookup WHERE game_id = ? AND user_id = ? LIMIT 1`, gameID, userID).Scan(&userDiceID)
+			if err != nil {
+				userDiceID = gocql.UUID{}
+			}
+
+			// Get opponent's dice ID
+			var opponentDiceID gocql.UUID
+			err = h.socketService.GetCassandraSession().Query(`SELECT dice_id FROM dice_rolls_lookup WHERE game_id = ? AND user_id = ? LIMIT 1`, gameID, entry.OpponentUserID).Scan(&opponentDiceID)
+			if err != nil {
+				opponentDiceID = gocql.UUID{}
+			}
+
 			response := map[string]interface{}{
-				"status":    "pending",
-				"message":   "No opponent found yet",
-				"joined_at": entry.JoinedAt.Format(time.RFC3339),
+				"status":             "success",
+				"user_id":            userID,
+				"opponent_user_id":   entry.OpponentUserID,
+				"opponent_league_id": entry.OpponentLeagueID,
+				"joined_at":          entry.JoinedAt.Format(time.RFC3339),
+				"game_id":            gameID,
+				"user_pieces":        userPieces,
+				"opponent_pieces":    opponentPieces,
+				"user_dice":          userDiceID.String(),
+				"opponent_dice":      opponentDiceID.String(),
+				"pieces_status":      "active", // Indicates pieces are available
+				"turn_id":            entry.TurnID,
+			}
+			socket.Emit("opponent:response", response)
+		} else {
+			// Optionally, emit a minimal/pending response, but do NOT include zero dice IDs
+			response := map[string]interface{}{
+				"status":             "pending",
+				"user_id":            userID,
+				"opponent_user_id":   entry.OpponentUserID,
+				"opponent_league_id": entry.OpponentLeagueID,
+				"joined_at":          entry.JoinedAt.Format(time.RFC3339),
+				"game_id":            "",
+				"user_pieces":        []map[string]interface{}{},
+				"opponent_pieces":    []map[string]interface{}{},
+				"pieces_status":      "pending",
+				"turn_id":            entry.TurnID,
 			}
 			socket.Emit("opponent:response", response)
 		}
@@ -983,8 +1136,49 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			return
 		}
 
-		reqData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
+		var reqData map[string]interface{}
+		var jwtToken string // Declare jwtToken before the if block
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			encStr, hasUserData := raw["user_data"].(string)
+			if !hasUserData || encStr == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "user_data",
+					Message:   "user_data is required",
+				})
+				return
+			}
+			var hasJWT bool
+			jwtToken, hasJWT = raw["jwt_token"].(string)
+			if !hasJWT || jwtToken == "" {
+				socket.Emit("opponent:info:response", map[string]interface{}{
+					"status":     "error",
+					"error_code": "auth_failed",
+					"error_type": "authentication",
+					"field":      "jwt_token",
+					"message":    "Invalid or expired token",
+				})
+				return
+			}
+			decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+			if err != nil {
+				socket.Emit("opponent:info:response", map[string]interface{}{
+					"status":     "error",
+					"error_code": "auth_failed",
+					"error_type": "authentication",
+					"field":      "user_data",
+					"message":    "Failed to decrypt user_data",
+				})
+				return
+			}
+			// Fallback: if jwt_token is missing in decrypted but present in jwtToken, set it
+			if _, ok := decrypted["jwt_token"]; !ok && jwtToken != "" {
+				decrypted["jwt_token"] = jwtToken
+			}
+			reqData = decrypted
+		} else {
 			socket.Emit("opponent:info:response", map[string]interface{}{
 				"status":     "error",
 				"error_code": "invalid_format",
@@ -1037,6 +1231,15 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		if joinedAtStr, ok := reqData["joined_at"].(string); ok && joinedAtStr != "" {
 			if t, err := time.Parse(time.RFC3339, joinedAtStr); err == nil {
 				joinMonth = t.Format("2006-01")
+			} else {
+				socket.Emit("opponent:info:response", map[string]interface{}{
+					"status":     "error",
+					"error_code": "invalid_format",
+					"error_type": "format",
+					"field":      "joined_at",
+					"message":    "Failed to parse joined_at",
+				})
+				return
 			}
 		}
 		// Get league join entry to find opponent
@@ -1051,7 +1254,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-
 		if entry.OpponentUserID == "" || entry.OpponentUserID == "NULL" {
 			socket.Emit("opponent:info:response", map[string]interface{}{
 				"status":  "error",
@@ -1059,7 +1261,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-
 		// Get opponent user details
 		var opponentUser models.User
 		err = h.socketService.GetCassandraSession().Query(`
@@ -1078,14 +1279,12 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-
 		// Get opponent's pieces for this game
 		gamePiecesService := services.NewGamePiecesService(h.socketService.GetCassandraSession())
 		opponentPieces, err := gamePiecesService.GetUserPiecesCurrentState(gameID, entry.OpponentUserID)
 		if err != nil {
 			opponentPieces = []map[string]interface{}{}
 		}
-
 		response := map[string]interface{}{
 			"status":             "success",
 			"opponent_user_id":   entry.OpponentUserID,
@@ -1097,7 +1296,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			"opponent_pieces":    opponentPieces,
 			"joined_at":          entry.JoinedAt.Format(time.RFC3339),
 		}
-
 		socket.Emit("opponent:info:response", response)
 	})
 
@@ -1129,17 +1327,52 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-		reqData, ok := event.Data[0].(map[string]interface{})
-		if !ok {
+		var reqData map[string]interface{}
+		var jwtToken string // Declare jwtToken before the if block
+		if raw, ok := event.Data[0].(map[string]interface{}); ok {
+			encStr, hasUserData := raw["user_data"].(string)
+			if !hasUserData || encStr == "" {
+				socket.Emit("connection_error", models.ConnectionError{
+					Status:    "error",
+					ErrorCode: models.ErrorCodeMissingField,
+					ErrorType: models.ErrorTypeField,
+					Field:     "user_data",
+					Message:   "user_data is required",
+				})
+				return
+			}
+			var hasJWT bool
+			jwtToken, hasJWT = raw["jwt_token"].(string)
+			if !hasJWT || jwtToken == "" {
+				socket.Emit("cancel:find:response", map[string]interface{}{
+					"status":  "error",
+					"message": "Invalid or expired token",
+				})
+				return
+			}
+			decrypted, err := utils.DecryptUserData(encStr, jwtToken)
+			if err != nil {
+				socket.Emit("cancel:find:response", map[string]interface{}{
+					"status":  "error",
+					"message": "Failed to decrypt user_data",
+				})
+				return
+			}
+			// Fallback: if jwt_token is missing in decrypted but present in jwtToken, set it
+			if _, ok := decrypted["jwt_token"]; !ok && jwtToken != "" {
+				decrypted["jwt_token"] = jwtToken
+			}
+			reqData = decrypted
+		} else {
 			socket.Emit("cancel:find:response", map[string]interface{}{
 				"status":  "error",
 				"message": "Invalid data format",
 			})
 			return
 		}
+
 		userID, userOk := reqData["user_id"].(string)
 		contestID, contestOk := reqData["contest_id"].(string)
-		jwtToken, jwtOk := reqData["jwt_token"].(string)
 		if !userOk || userID == "" {
 			socket.Emit("cancel:find:response", map[string]interface{}{
 				"status":  "error",
@@ -1154,14 +1387,6 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 			})
 			return
 		}
-		if !jwtOk || jwtToken == "" {
-			socket.Emit("cancel:find:response", map[string]interface{}{
-				"status":  "error",
-				"message": "jwt_token is required",
-			})
-			return
-		}
-		// Authenticate user
 		simpleJWTData, err := utils.ValidateSimpleJWTToken(jwtToken)
 		if err != nil {
 			socket.Emit("cancel:find:response", map[string]interface{}{
@@ -1189,8 +1414,18 @@ func (h *GameSocketHandler) SetupGameHandlers(socket *socketio.Socket, authFunc 
 		if joinedAtStr, ok := reqData["joined_at"].(string); ok && joinedAtStr != "" {
 			if t, err := time.Parse(time.RFC3339, joinedAtStr); err == nil {
 				joinMonth = t.Format("2006-01")
+			} else {
+				socket.Emit("cancel:find:response", map[string]interface{}{
+					"status":     "error",
+					"error_code": "invalid_format",
+					"error_type": "format",
+					"field":      "joined_at",
+					"message":    "Failed to parse joined_at",
+				})
+				return
 			}
 		}
+		// Get league join entry to find joined_at
 		entry, err := h.socketService.GetLeagueJoinEntry(userID, contestID, joinMonth)
 		if err != nil {
 			socket.Emit("cancel:find:response", map[string]interface{}{

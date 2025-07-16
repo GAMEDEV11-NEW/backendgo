@@ -688,6 +688,37 @@ func DecryptUserData(encryptedData string, jwtToken string) (map[string]interfac
 	return result, nil
 }
 
+// DecryptUserDataWithMobile decrypts user_data using the first 32 chars of the mobile_no as the key
+func DecryptUserDataWithMobile(encryptedData string, mobileNo string) (map[string]interface{}, error) {
+	key := []byte(mobileNo)
+	if len(key) < 32 {
+		padded := make([]byte, 32)
+		copy(padded, key)
+		key = padded
+	} else {
+		key = key[:32]
+	}
+	iv := make([]byte, 16) // all zeros
+	ciphertext, err := base64.StdEncoding.DecodeString(encryptedData)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	mode := cipher.NewCBCDecrypter(block, iv)
+	plaintext := make([]byte, len(ciphertext))
+	mode.CryptBlocks(plaintext, ciphertext)
+	plaintext = pkcs7Unpad(plaintext)
+	var result map[string]interface{}
+	err = json.Unmarshal(plaintext, &result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // pkcs7Unpad removes PKCS#7 padding
 func pkcs7Unpad(data []byte) []byte {
 	length := len(data)

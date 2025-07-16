@@ -134,14 +134,9 @@ func (m *MatchmakingService) createDiceRolls(gameID, user1ID, user2ID string) er
 
 // createMatch creates a match between two users
 func (m *MatchmakingService) createMatch(user1, user2 PendingMatch) (*MatchResult, error) {
-	fmt.Printf("DEBUG: createMatch called for user1: %s, user2: %s\n", user1.UserID, user2.UserID)
-
 	// Store only user IDs in user1_data and user2_data columns
 	user1Data := user1.UserID
 	user2Data := user2.UserID
-
-	fmt.Printf("DEBUG: User1 ID: %s\n", user1Data)
-	fmt.Printf("DEBUG: User2 ID: %s\n", user2Data)
 
 	// Create match pair entry with user IDs
 	matchPairID := gocql.TimeUUID()
